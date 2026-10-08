@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.0";
-import { executeNativeTool, NATIVE_TOOL_REGISTRY, type CoreToolKey, type NativeToolContext } from "./native-kernel.ts";
+import { executeNativeTool, NATIVE_TOOL_REGISTRY, validateWorkflow, type CoreToolKey, type NativeToolContext, type WorkflowDefinition } from "./native-kernel.ts";
 
 const ALLOWED_ORIGIN = "https://yudi8377.github.io";
 const corsHeaders = {
@@ -34,7 +34,7 @@ Deno.serve(async (req: Request) => {
   const contentLength = Number(req.headers.get("content-length") || "0");
   if (contentLength > 20000) return respond(413, { error: "REQUEST_TOO_LARGE" });
 
-  let body: { agent_id?: unknown; input?: unknown; tool_key?: unknown; tool_input?: unknown };
+  let body: { agent_id?: unknown; input?: unknown; tool_key?: unknown; tool_input?: unknown; workflow_id?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -44,12 +44,15 @@ Deno.serve(async (req: Request) => {
   const agentId = typeof body.agent_id === "string" ? body.agent_id : "";
   const toolKey = typeof body.tool_key === "string" ? body.tool_key : "";
   const nativeToolRequested = toolKey.length > 0;
+  const workflowId = typeof body.workflow_id === "string" ? body.workflow_id : "";
+  const workflowRequested = workflowId.length > 0;
   const nativeToolInput = body.tool_input;
   if (nativeToolRequested && (!Object.hasOwn(NATIVE_TOOL_REGISTRY, toolKey) || !nativeToolInput || typeof nativeToolInput !== "object" || Array.isArray(nativeToolInput))) {
     return respond(400, { error: "INVALID_NATIVE_TOOL_REQUEST" });
   }
   const input = nativeToolRequested
     ? JSON.stringify(nativeToolInput)
+    : workflowRequested ? `workflow:${workflowId}`
     : typeof body.input === "string" ? body.input.trim() : "";
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(agentId)) {
     return respond(400, { error: "INVALID_AGENT_ID" });
@@ -116,6 +119,90 @@ Deno.serve(async (req: Request) => {
     .single();
 
   if (runCreateError || !run) return respond(500, { error: "RUN_RECORD_CREATE_FAILED" });
+
+  if (workflowRequested) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(workflowId)) {
+      await admin.from("agent_runs").update({ status: "blocked", error_code: "INVALID_WORKFLOW_ID", finished_at: new Date().toISOString() }).eq("id", run.id);
+      return respond(400, { error: "INVALID_WORKFLOW_ID", run_id: run.id });
+    }
+    const { data: workflow, error: workflowError } = await admin.from("agent_workflows")
+      .select("id,workspace_id,name,definition,status,max_steps,max_duration_seconds")
+      .eq("id", workflowId).eq("workspace_id", agent.workspace_id).maybeSingle();
+    if (workflowError || !workflow) {
+      await admin.from("agent_runs").update({ status: "blocked", error_code: "WORKFLOW_NOT_FOUND", finished_at: new Date().toISOString() }).eq("id", run.id);
+      return respond(workflowError ? 503 : 404, { error: workflowError ? "WORKFLOW_LOOKUP_FAILED" : "WORKFLOW_NOT_FOUND", run_id: run.id });
+    }
+    if (workflow.status !== "approved") {
+      await admin.from("agent_runs").update({ status: "blocked", error_code: "WORKFLOW_REQUIRES_APPROVAL", finished_at: new Date().toISOString() }).eq("id", run.id);
+      return respond(409, { error: "WORKFLOW_REQUIRES_APPROVAL", run_id: run.id });
+    }
+    const definition = workflow.definition as WorkflowDefinition;
+    const validation = validateWorkflow(definition, workflow.max_steps);
+    if (!validation.ok) {
+      await admin.from("agent_runs").update({ status: "blocked", error_code: "WORKFLOW_VALIDATION_FAILED", output_text: JSON.stringify(validation.errors), finished_at: new Date().toISOString() }).eq("id", run.id);
+      await admin.from("audit_events").insert({ workspace_id: agent.workspace_id, actor_id: user.id, action: "agent.workflow_blocked", entity_type: "agent_run", entity_id: run.id, details: { agent_id: agent.id, workflow_id: workflow.id, errors: validation.errors } });
+      return respond(400, { error: "WORKFLOW_VALIDATION_FAILED", errors: validation.errors, run_id: run.id });
+    }
+    if (workflow.max_duration_seconds > 120) {
+      await admin.from("agent_runs").update({ status: "blocked", error_code: "WORKFLOW_DURATION_LIMIT_EXCEEDED", finished_at: new Date().toISOString() }).eq("id", run.id);
+      return respond(400, { error: "WORKFLOW_DURATION_LIMIT_EXCEEDED", run_id: run.id });
+    }
+    const workflowStarted = Date.now();
+    const nodeResults: Record<string, unknown> = {};
+    for (const node of validation.orderedNodes) {
+      if (Date.now() - workflowStarted > workflow.max_duration_seconds * 1000) {
+        const durationMs = Date.now() - startedAt;
+        await admin.from("agent_runs").update({ status: "failed", error_code: "WORKFLOW_TIMEOUT", output_text: JSON.stringify(nodeResults).slice(0, 50000), duration_ms: durationMs, finished_at: new Date().toISOString() }).eq("id", run.id);
+        await admin.from("audit_events").insert({ workspace_id: agent.workspace_id, actor_id: user.id, action: "agent.workflow_failed", entity_type: "agent_run", entity_id: run.id, details: { workflow_id: workflow.id, failed_node: node.id, reason: "TIMEOUT" } });
+        return respond(504, { error: "WORKFLOW_TIMEOUT", run_id: run.id, node_results: nodeResults });
+      }
+      if (node.requiresApproval) {
+        const durationMs = Date.now() - startedAt;
+        await admin.from("agent_runs").update({ status: "blocked", error_code: "HUMAN_APPROVAL_REQUIRED", output_text: JSON.stringify({ completed: nodeResults, blocked_node: node.id }).slice(0, 50000), duration_ms: durationMs, finished_at: new Date().toISOString() }).eq("id", run.id);
+        await admin.from("audit_events").insert({ workspace_id: agent.workspace_id, actor_id: user.id, action: "agent.workflow_approval_gate", entity_type: "agent_run", entity_id: run.id, details: { workflow_id: workflow.id, node_id: node.id } });
+        return respond(409, { error: "HUMAN_APPROVAL_REQUIRED", run_id: run.id, completed: nodeResults, blocked_node: node.id });
+      }
+      const { data: toolDefinition, error: definitionError } = await admin.from("agent_tool_registry")
+        .select("tool_key,required_permissions,status,risk_level").eq("workspace_id", agent.workspace_id)
+        .eq("tool_key", node.tool).eq("status", "approved").maybeSingle();
+      const { data: grant, error: grantError } = await admin.from("agent_tool_grants")
+        .select("granted_permissions,status").eq("workspace_id", agent.workspace_id)
+        .eq("agent_id", agent.id).eq("tool_key", node.tool).eq("status", "active").maybeSingle();
+      if (definitionError || grantError || !toolDefinition || !grant) {
+        const code = definitionError || grantError ? "WORKFLOW_TOOL_LOOKUP_FAILED" : "WORKFLOW_TOOL_NOT_GRANTED";
+        await admin.from("agent_runs").update({ status: "blocked", error_code: code, output_text: JSON.stringify({ completed: nodeResults, blocked_node: node.id }).slice(0, 50000), duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
+        await admin.from("audit_events").insert({ workspace_id: agent.workspace_id, actor_id: user.id, action: "agent.workflow_blocked", entity_type: "agent_run", entity_id: run.id, details: { workflow_id: workflow.id, node_id: node.id, tool_key: node.tool, reason: code } });
+        return respond(definitionError || grantError ? 503 : 403, { error: code, run_id: run.id, completed: nodeResults, blocked_node: node.id });
+      }
+      const required = Array.isArray(toolDefinition.required_permissions) ? toolDefinition.required_permissions : [];
+      const granted = Array.isArray(grant.granted_permissions) ? grant.granted_permissions : [];
+      if (!required.every((permission: string) => granted.includes(permission))) {
+        await admin.from("agent_runs").update({ status: "blocked", error_code: "WORKFLOW_PERMISSION_DENIED", output_text: JSON.stringify({ completed: nodeResults, blocked_node: node.id }).slice(0, 50000), duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
+        return respond(403, { error: "WORKFLOW_PERMISSION_DENIED", run_id: run.id, completed: nodeResults, blocked_node: node.id });
+      }
+      for (const dependency of node.dependsOn ?? []) {
+        const prior = nodeResults[dependency] as { ok?: boolean } | undefined;
+        if (!prior?.ok) {
+          await admin.from("agent_runs").update({ status: "blocked", error_code: "WORKFLOW_DEPENDENCY_FAILED", output_text: JSON.stringify({ completed: nodeResults, blocked_node: node.id }).slice(0, 50000), duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
+          return respond(409, { error: "WORKFLOW_DEPENDENCY_FAILED", run_id: run.id, completed: nodeResults, blocked_node: node.id });
+        }
+      }
+      const nodeInput = node.input ?? {};
+      const context: NativeToolContext = { actorId: user.id, workspaceId: agent.workspace_id, agentApproved: true, workspaceRole: membership.role, grantedPermissions: granted, allowedTools: [node.tool as CoreToolKey] };
+      const result = executeNativeTool(node.tool, nodeInput, context);
+      nodeResults[node.id] = { ok: result.ok, tool: result.tool, data: result.data, error: result.error, duration_ms: result.durationMs };
+      if (!result.ok) {
+        await admin.from("agent_runs").update({ status: "failed", error_code: result.error?.code || "WORKFLOW_NODE_FAILED", output_text: JSON.stringify(nodeResults).slice(0, 50000), duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
+        await admin.from("audit_events").insert({ workspace_id: agent.workspace_id, actor_id: user.id, action: "agent.workflow_failed", entity_type: "agent_run", entity_id: run.id, details: { workflow_id: workflow.id, failed_node: node.id, tool_key: node.tool } });
+        return respond(400, { error: "WORKFLOW_NODE_FAILED", run_id: run.id, node_results: nodeResults });
+      }
+    }
+    const durationMs = Date.now() - startedAt;
+    const { error: saveError } = await admin.from("agent_runs").update({ status: "succeeded", output_text: JSON.stringify({ workflow_id: workflow.id, workflow_name: workflow.name, node_results: nodeResults }).slice(0, 50000), duration_ms: durationMs, finished_at: new Date().toISOString() }).eq("id", run.id);
+    await admin.from("audit_events").insert({ workspace_id: agent.workspace_id, actor_id: user.id, action: saveError ? "agent.workflow_result_save_failed" : "agent.workflow_succeeded", entity_type: "agent_run", entity_id: run.id, details: { workflow_id: workflow.id, node_count: validation.orderedNodes.length, duration_ms: durationMs } });
+    if (saveError) return respond(500, { error: "WORKFLOW_RESULT_SAVE_FAILED", run_id: run.id });
+    return respond(200, { run_id: run.id, status: "succeeded", workflow: workflow.name, node_results: nodeResults, duration_ms: durationMs });
+  }
 
   if (nativeToolRequested) {
     const { data: toolDefinition, error: toolDefinitionError } = await admin
