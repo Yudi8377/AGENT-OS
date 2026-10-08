@@ -2,7 +2,11 @@
 
 **Unified AI Agent Platform** — satu tempat untuk menemukan tools AI, mengelola skills, membangun agent, merancang workflow, menjalankan agent secara terisolasi, serta mengevaluasi dan mengaudit hasilnya.
 
-> Status: fondasi aplikasi aktif dengan Supabase Auth/database, workspace RBAC, alur persetujuan agent, riwayat run, dan Edge Function `agent-run`. Eksekusi model memerlukan konfigurasi secret `OPENAI_API_KEY` dan model OpenAI pada agent; sandbox/tools eksternal belum tersedia.
+> Status: aplikasi web sudah dipublikasikan melalui GitHub Pages; Supabase Auth/database, workspace RBAC, alur persetujuan agent, riwayat run, dan Edge Function `agent-run` telah disiapkan. Eksekusi model memerlukan secret server `OPENAI_API_KEY`; sandbox/tools eksternal belum tersedia.
+
+**Live app:** https://yudi8377.github.io/AGENT-OS/  
+**Repository:** https://github.com/Yudi8377/AGENT-OS  
+**Supabase:** https://supabase.com/dashboard/project/tgicltoykzpsridyhvci
 
 ## Status implementasi saat ini
 
@@ -11,8 +15,9 @@
 - Workspace dibuat secara atomik melalui RPC `create_workspace`; profil dan timestamp dikelola database.
 - Status agent: Draft → Review → Approved; hanya Owner/Admin dapat menyetujui atau menonaktifkan agent.
 - Edge Function `agent-run` memvalidasi JWT, keanggotaan workspace, peran, dan status persetujuan. Ia hanya menjalankan panggilan model OpenAI tanpa tools; jika secret/provider belum siap, run ditandai blocked.
-- Sebelum uji model: atur secret `OPENAI_API_KEY` di Supabase Edge Function Secrets. Jangan menaruh key di frontend atau Git.
-- Belum siap produksi: belum ada sandbox eksekusi kode, tool registry, rate limiting berbasis kuota, workflow runner, dan evaluasi otomatis.
+- Untuk aktivasi model: tambahkan `OPENAI_API_KEY` pada Supabase → Project Settings / Edge Functions → Secrets. Jangan menaruh key di frontend atau Git. Panggilan model dapat menimbulkan biaya pada akun provider.
+- Konfigurasikan Supabase Auth URL Configuration: Site URL `https://yudi8377.github.io/AGENT-OS/` dan Redirect URL `https://yudi8377.github.io/AGENT-OS/**` agar konfirmasi email kembali ke aplikasi.
+- Belum siap untuk produksi penuh: belum ada sandbox eksekusi kode, tool registry, rate limiting berbasis kuota, workflow runner, evaluasi otomatis, dan pengujian penetrasi independen. Gunakan status ini sebagai limited beta, bukan layanan produksi kritis.
 
 ## Modul produk
 
@@ -56,11 +61,12 @@ npm run preview
 
 ## Tahapan implementasi
 
-- **Fondasi UI:** navigasi modul, direktori contoh, pencarian, dan alur pembuatan agent lokal.
-- **Data layer:** skema persisten, workspace, pengguna, RBAC, dan audit.
-- **Integrasi katalog:** sinkronisasi metadata sumber dengan provenance dan lisensi.
-- **Agent runtime:** provider model dan tool registry dengan izin yang dibatasi.
-- **Orkestrasi:** workflow runner, state, retry, dan approval gate.
-- **Evaluasi & operasi:** pengujian, observabilitas, budget controls, dan hardening.
+- **Selesai — web deployment:** GitHub Pages dengan build CI otomatis.
+- **Selesai — data layer dasar:** skema persisten, workspace, pengguna, RBAC, dan audit.
+- **Selesai — agent lifecycle dasar:** Draft → Review → Approved, serta riwayat run.
+- **Terpasang — model runtime terbatas:** Edge Function memanggil OpenAI tanpa tools ketika secret/provider tersedia.
+- **Berikutnya — katalog:** sinkronisasi metadata dengan provenance dan pemeriksaan lisensi.
+- **Berikutnya — Orchestrator:** workflow runner, state, retry, dan approval gate.
+- **Berikutnya — evaluasi & operasi:** pengujian, observabilitas, budget controls, sandbox, dan hardening.
 
 Antarmuka awal tidak mengklaim agent benar-benar berjalan sampai runtime dan kredensial provider disambungkan dengan aman.
