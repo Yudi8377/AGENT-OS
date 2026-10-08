@@ -15,7 +15,8 @@ export type CoreToolKey =
   | "core.text.stats"
   | "core.text.truncate"
   | "core.text.lines"
-  | "core.json.validate";
+  | "core.json.validate"
+  | "core.math.calculate";
 
 export type RiskLevel = "low" | "medium" | "high";
 
@@ -91,6 +92,14 @@ export const NATIVE_TOOL_REGISTRY: Record<CoreToolKey, NativeToolDefinition> = {
     maxInputBytes: 12000,
     maxOutputBytes: 24000,
   },
+  "core.math.calculate": {
+    key: "core.math.calculate",
+    description: "Evaluate bounded arithmetic expressions using a native parser, without eval or dynamic code.",
+    requiredPermissions: ["math:calculate"],
+    risk: "low",
+    maxInputBytes: 512,
+    maxOutputBytes: 256,
+  },
 };
 
 const encoder = new TextEncoder();
@@ -102,6 +111,58 @@ function fail(tool: CoreToolKey, code: string, message: string, start: number): 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+
+/** Small arithmetic parser: no eval, variables, function calls, or property access. */
+function calculateArithmetic(expression: string): number {
+  if (!expression.trim() || expression.length > 256) throw new Error("MATH_EXPRESSION_INVALID");
+  const tokens = expression.match(/(?:\d+(?:\.\d*)?|\.\d+)|[()+\-*/%]/g) ?? [];
+  const compact = expression.replace(/\s+/g, "");
+  if (tokens.join("") !== compact || tokens.length > 128) throw new Error("MATH_EXPRESSION_INVALID");
+  let position = 0;
+  const peek = () => tokens[position];
+  const take = () => tokens[position++];
+  const finite = (value: number) => {
+    if (!Number.isFinite(value) || Math.abs(value) > 1e15) throw new Error("MATH_RESULT_OUT_OF_RANGE");
+    return value;
+  };
+  function primary(): number {
+    const token = take();
+    if (token === "(") {
+      const value = sum();
+      if (take() !== ")") throw new Error("MATH_EXPRESSION_INVALID");
+      return value;
+    }
+    if (token === "+" || token === "-") {
+      const value = primary();
+      return token === "-" ? -value : value;
+    }
+    if (!token || !/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(token)) throw new Error("MATH_EXPRESSION_INVALID");
+    return Number(token);
+  }
+  function product(): number {
+    let value = primary();
+    while (["*", "/", "%"].includes(peek() ?? "")) {
+      const op = take();
+      const rhs = primary();
+      if ((op === "/" || op === "%") && rhs === 0) throw new Error("MATH_DIVISION_BY_ZERO");
+      value = finite(op === "*" ? value * rhs : op === "/" ? value / rhs : value % rhs);
+    }
+    return value;
+  }
+  function sum(): number {
+    let value = product();
+    while (peek() === "+" || peek() === "-") {
+      const op = take();
+      const rhs = product();
+      value = finite(op === "+" ? value + rhs : value - rhs);
+    }
+    return value;
+  }
+  const result = sum();
+  if (position !== tokens.length) throw new Error("MATH_EXPRESSION_INVALID");
+  return finite(result);
 }
 
 /** Server-side authorization gate. A model or user input cannot override this result. */
@@ -186,6 +247,15 @@ export function executeNativeTool(
         data = { valid: true, value: JSON.parse(input.text) as JsonValue };
       } catch {
         data = { valid: false, value: null };
+      }
+      break;
+    }
+    case "core.math.calculate": {
+      if (typeof input.expression !== "string") return fail(auth.tool.key, "INVALID_INPUT", "'expression' must be a string.", start);
+      try {
+        data = { expression: input.expression, result: calculateArithmetic(input.expression) };
+      } catch (error) {
+        return fail(auth.tool.key, error instanceof Error ? error.message : "MATH_EXPRESSION_INVALID", "Expression is invalid or outside the safe calculation range.", start);
       }
       break;
     }
