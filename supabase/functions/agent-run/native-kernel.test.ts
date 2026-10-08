@@ -101,3 +101,12 @@ Deno.test("native planner rejects unknown intents instead of guessing", () => {
   const planned = planNativeGoal("book a flight to Mars");
   assert(!planned.ok && planned.error === "GOAL_FORMAT_UNSUPPORTED", "expected unsupported goal rejection");
 });
+
+
+Deno.test("native planner creates a bounded two-step text report", () => {
+  const planned = planNativeGoal("text-report: alpha\\nbeta");
+  assert(planned.ok, "expected text report plan");
+  assert(planned.plan.steps.length === 2, "expected two steps");
+  assert(planned.plan.steps[0].tool === "core.text.stats", "stats must run first");
+  assert(planned.plan.steps[1].dependsOn.includes("text_stats"), "line report must depend on stats");
+});
