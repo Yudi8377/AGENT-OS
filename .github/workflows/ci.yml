@@ -16,11 +16,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Install dependencies
         run: npm install
+      - name: Test native kernel
+        run: deno test --no-check supabase/functions/agent-run/native-kernel.test.ts
       - name: Build production app
         run: npm run build
