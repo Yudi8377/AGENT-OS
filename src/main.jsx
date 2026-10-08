@@ -121,4 +121,79 @@ function PageHeader({eyebrow,title,subtitle,action}) { return <div className="su
 function SourceCard({item}) { return <article className="source-card"><div className="source-icon"><AppWindow size={19}/></div><div className="source-type">{item.type}</div><h3>{item.name}</h3><p>{item.detail}</p><div className="source-meta"><span>{item.license}</span></div><a href={item.url} target="_blank" rel="noreferrer">View source <span>↗</span></a></article>; }
 function FlowNode({icon:Icon,title,subtitle}) { return <div className="flow-node"><div><Icon size={19}/></div><b>{title}</b><small>{subtitle}</small></div>; }
 
+function App() {
+  const [session, setSession] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authMode, setAuthMode] = useState('signin');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [workspace, setWorkspace] = useState(null);
+  const [workspaceName, setWorkspaceName] = useState('');
+  const [workspaceSlug, setWorkspaceSlug] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    if (!supabase) { setAuthReady(true); return; }
+    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setAuthReady(true); });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession));
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!supabase || !session?.user?.id) { setWorkspace(null); return; }
+    let alive = true;
+    supabase.from('workspace_members').select('workspace_id,role,workspaces(id,name,slug)')
+      .eq('user_id', session.user.id).limit(1).maybeSingle()
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) { setMessage('Database belum siap. Terapkan migrasi Agent OS terlebih dahulu: ' + error.message); return; }
+        if (data?.workspaces) setWorkspace({ ...data.workspaces, role: data.role });
+        else setWorkspace(null);
+      });
+    return () => { alive = false; };
+  }, [session?.user?.id]);
+
+  async function submitAuth(e) {
+    e.preventDefault(); setBusy(true); setMessage('');
+    try {
+      if (authMode === 'signup') {
+        const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { display_name: displayName } } });
+        if (error) throw error;
+        if (!data.session) setMessage('Pendaftaran diterima. Periksa email untuk konfirmasi, lalu masuk.');
+        else setMessage('Akun berhasil dibuat. Lanjutkan membuat workspace.');
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
+    } catch (err) { setMessage(err.message || 'Autentikasi gagal.'); }
+    finally { setBusy(false); }
+  }
+
+  async function createWorkspace(e) {
+    e.preventDefault(); setBusy(true); setMessage('');
+    const slug = (workspaceSlug || workspaceName).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+    if (slug.length < 3 || !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(slug)) {
+      setMessage('Slug harus 3–60 karakter, huruf kecil, angka, atau tanda hubung.'); setBusy(false); return;
+    }
+    try {
+      const { data: ws, error: wsError } = await supabase.from('workspaces')
+        .insert({ name: workspaceName.trim(), slug, created_by: session.user.id }).select('id,name,slug').single();
+      if (wsError) throw wsError;
+      const { error: memberError } = await supabase.from('workspace_members')
+        .insert({ workspace_id: ws.id, user_id: session.user.id, role: 'owner' });
+      if (memberError) throw memberError;
+      setWorkspace(ws);
+    } catch (err) { setMessage('Workspace belum dibuat: ' + (err.message || 'kesalahan tidak diketahui')); }
+    finally { setBusy(false); }
+  }
+
+  if (!authReady) return <div className="gate"><div className="gate-card"><div className="brand-mark"><Command size={22}/></div><h1>Agent OS</h1><p>Memeriksa sesi aman…</p></div></div>;
+  if (!supabaseConfigured) return <div className="gate"><div className="gate-card"><div className="brand-mark"><Command size={22}/></div><div className="eyebrow">SETUP REQUIRED</div><h1>Connect your workspace</h1><p>Untuk mengaktifkan akun dan database, siapkan proyek Supabase khusus Agent OS lalu isi variabel lingkungan berikut.</p><pre>VITE_SUPABASE_URL{ '\n' }VITE_SUPABASE_PUBLISHABLE_KEY</pre><p className="gate-foot">Lihat .env.example dan docs/architecture.md. Jangan gunakan service-role key di browser.</p></div></div>;
+  if (!session) return <div className="gate"><form className="gate-card" onSubmit={submitAuth}><div className="brand-mark"><Command size={22}/></div><div className="eyebrow">SECURE WORKSPACE ACCESS</div><h1>{authMode === 'signin' ? 'Welcome back.' : 'Create your account.'}</h1><p>{authMode === 'signin' ? 'Masuk untuk membuka workspace Agent OS.' : 'Daftar dengan email dan password. Konfirmasi email mungkin diperlukan.'}</p>{authMode === 'signup' && <label>Nama tampilan<input required value={displayName} onChange={e=>setDisplayName(e.target.value)} autoComplete="name" placeholder="Nama Anda"/></label>}<label>Email<input required type="email" value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" placeholder="you@example.com"/></label><label>Password<input required type="password" minLength={8} value={password} onChange={e=>setPassword(e.target.value)} autoComplete={authMode==='signin'?'current-password':'new-password'} placeholder="Minimal 8 karakter"/></label>{message && <div className="gate-message">{message}</div>}<button className="primary gate-submit" disabled={busy} type="submit">{busy?'Processing…':authMode==='signin'?'Sign in':'Create account'}</button><button className="gate-switch" type="button" onClick={()=>{setAuthMode(authMode==='signin'?'signup':'signin');setMessage('')}}>{authMode==='signin'?'Belum punya akun? Daftar':'Sudah punya akun? Masuk'}</button><small>Autentikasi menggunakan Supabase Auth. Eksekusi agent tetap nonaktif.</small></form></div>;
+  if (!workspace) return <div className="gate"><form className="gate-card" onSubmit={createWorkspace}><div className="brand-mark"><Command size={22}/></div><div className="eyebrow">FIRST-TIME SETUP</div><h1>Create a workspace.</h1><p>Workspace memisahkan agent dan data. Anda akan menjadi owner workspace ini.</p><label>Nama workspace<input required maxLength={120} value={workspaceName} onChange={e=>{setWorkspaceName(e.target.value);if(!workspaceSlug)setWorkspaceSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,''))}} placeholder="My AI Workspace"/></label><label>Workspace slug<input required minLength={3} maxLength={60} pattern="[a-z0-9][a-z0-9-]*[a-z0-9]" value={workspaceSlug} onChange={e=>setWorkspaceSlug(e.target.value)} placeholder="my-ai-workspace"/></label>{message && <div className="gate-message">{message}</div>}<button className="primary gate-submit" disabled={busy} type="submit">{busy?'Creating…':'Create workspace'}</button><button className="gate-switch" type="button" onClick={()=>supabase.auth.signOut()}>Sign out</button></form></div>;
+  return <Dashboard user={session.user} workspace={workspace} onSignOut={() => supabase.auth.signOut()} />;
+}
+
 createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>);
