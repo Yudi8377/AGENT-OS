@@ -1,4 +1,4 @@
-import { authorizeNativeTool, executeNativeTool, resolveWorkflowInput, validateWorkflow, type NativeToolContext } from "./native-kernel.ts";
+import { authorizeNativeTool, executeNativeTool, planNativeGoal, resolveWorkflowInput, validateWorkflow, type NativeToolContext } from "./native-kernel.ts";
 
 const context: NativeToolContext = {
   actorId: "actor-test",
@@ -88,4 +88,16 @@ Deno.test("native math parser rejects code and division by zero", () => {
   assert(!code.ok, "expected code-like input to be rejected");
   const zero = executeNativeTool("core.math.calculate", { expression: "12 / 0" }, context);
   assert(!zero.ok && zero.error?.code === "MATH_DIVISION_BY_ZERO", "expected division by zero rejection");
+});
+
+Deno.test("native planner creates a bounded arithmetic plan", () => {
+  const planned = planNativeGoal("math: (2 + 3) * 4");
+  assert(planned.ok, "expected a supported goal to produce a plan");
+  assert(planned.plan.planner === "native-deterministic-v1", "expected native planner identity");
+  assert(planned.plan.steps.length === 1 && planned.plan.steps[0].tool === "core.math.calculate", "expected math tool selection");
+});
+
+Deno.test("native planner rejects unknown intents instead of guessing", () => {
+  const planned = planNativeGoal("book a flight to Mars");
+  assert(!planned.ok && planned.error === "GOAL_FORMAT_UNSUPPORTED", "expected unsupported goal rejection");
 });
