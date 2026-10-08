@@ -269,6 +269,61 @@ export function executeNativeTool(
 
 /** Validate workflow structure and return a safe topological execution order. */
 
+
+export interface NativePlanStep {
+  id: string;
+  tool: CoreToolKey;
+  input: Record<string, JsonValue>;
+  dependsOn: string[];
+  rationale: string;
+}
+export interface NativePlan {
+  version: 1;
+  planner: "native-deterministic-v1";
+  goal: string;
+  steps: NativePlanStep[];
+  limitations: string[];
+}
+
+/**
+ * Deterministic intent router for safe built-in tasks. It does not claim general
+ * language understanding: unknown or underspecified goals are rejected for clarification.
+ */
+export function planNativeGoal(goal: string): { ok: true; plan: NativePlan } | { ok: false; error: string; supportedIntents: string[] } {
+  const supportedIntents = ["math: <arithmetic expression>", "text-stats: <text>", "text-lines: <text>", "json-validate: <JSON text>"];
+  if (typeof goal !== "string" || !goal.trim() || goal.length > 4000) return { ok: false, error: "GOAL_INVALID", supportedIntents };
+  const normalized = goal.trim();
+  const colon = normalized.indexOf(":");
+  if (colon < 1) return { ok: false, error: "GOAL_FORMAT_UNSUPPORTED", supportedIntents };
+  const intent = normalized.slice(0, colon).trim().toLowerCase().replace(/\s+/g, "-");
+  const payload = normalized.slice(colon + 1).trim();
+  if (!payload) return { ok: false, error: "GOAL_PAYLOAD_REQUIRED", supportedIntents };
+  let tool: CoreToolKey, input: Record<string, JsonValue>, rationale: string;
+  switch (intent) {
+    case "math":
+      tool = "core.math.calculate"; input = { expression: payload }; rationale = "Calculate a bounded arithmetic expression with the native parser."; break;
+    case "text-stats":
+      tool = "core.text.stats"; input = { text: payload }; rationale = "Compute deterministic text statistics."; break;
+    case "text-lines":
+      tool = "core.text.lines"; input = { text: payload }; rationale = "Split text into numbered lines."; break;
+    case "json-validate":
+      tool = "core.json.validate"; input = { text: payload }; rationale = "Parse JSON without executing its contents."; break;
+    default:
+      return { ok: false, error: "GOAL_INTENT_UNSUPPORTED", supportedIntents };
+  }
+  const serialized = JSON.stringify(input);
+  const def = NATIVE_TOOL_REGISTRY[tool];
+  if (new TextEncoder().encode(serialized).length > def.maxInputBytes) return { ok: false, error: "GOAL_INPUT_TOO_LARGE", supportedIntents };
+  return {
+    ok: true,
+    plan: {
+      version: 1, planner: "native-deterministic-v1", goal: normalized,
+      steps: [{ id: "step_1", tool, input, dependsOn: [], rationale }],
+      limitations: ["Deterministic command router; not a general-purpose LLM planner.", "Execution still requires server-side approval, tool grants, and permissions."],
+    },
+  };
+}
+
 /**
  * Resolve explicit workflow references such as { "$ref": "stepA.data.words" }.
  * Only completed, successful prior-node results can be referenced. No expression
