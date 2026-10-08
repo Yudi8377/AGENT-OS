@@ -194,7 +194,7 @@ function App() {
     e.preventDefault(); setBusy(true); setMessage('');
     try {
       if (authMode === 'signup') {
-        const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { display_name: displayName }, emailRedirectTo: window.location.origin + window.location.pathname } });
+        const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { display_name: displayName }, emailRedirectTo: 'https://yudi8377.github.io/AGENT-OS/' } });
         if (error) throw error;
         if (!data.session) setMessage('Pendaftaran diterima. Periksa email untuk konfirmasi, lalu masuk.');
         else setMessage('Akun berhasil dibuat. Lanjutkan membuat workspace.');
