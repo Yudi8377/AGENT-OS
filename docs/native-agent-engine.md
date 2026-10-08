@@ -22,7 +22,7 @@ AGENT-OS is the product and control plane. It must not be a thin wrapper, affili
 ## Current foundation (2026-10-08)
 
 - React/Vite UI, Supabase Auth, workspace membership/RBAC, agent approval lifecycle, audit events, and run history.
-- 'agent-run' is a guarded text-only function; it is not a sandbox and does not execute arbitrary tools or code.
+- `agent-run` is a secured Edge Function with a compiled native dispatcher for deterministic tools and bounded workflow execution. It is not a general-purpose sandbox and does not execute arbitrary tools or code.
 - A native capability schema migration has been applied and committed:
   - 'agent_skills': versioned declarative skill definitions.
   - 'agent_tool_registry': native 'core.*' tool definitions with schemas and permissions.
@@ -44,8 +44,9 @@ AGENT-OS is the product and control plane. It must not be a thin wrapper, affili
 - [ ] Define typed Plan, Step, ToolCall, Observation, and RunResult contracts.
 - [ ] Build run state transitions: queued → planning → awaiting_approval/running → succeeded/failed/cancelled/timed_out.
 - [ ] Implement bounded step loop, idempotency keys, cancellation, deadline, and structured errors.
-- [x] Add native handlers: text statistics/truncation/line splitting and JSON validation.
-- [ ] Add retrieval from workspace knowledge and safe calculations.
+- [x] Add native handlers: text statistics/truncation/line splitting, JSON validation, and bounded arithmetic calculation.
+- [x] Add safe workflow output references (`{ "$ref": "stepId.data.field" }`) with prior-step checks and no expression evaluation.
+- [ ] Add retrieval from workspace knowledge.
 - [ ] Do not add shell, unrestricted filesystem, arbitrary HTTP, or dynamic code evaluation.
 
 ### Phase 3 — Model independence
@@ -55,7 +56,7 @@ AGENT-OS is the product and control plane. It must not be a thin wrapper, affili
 - [ ] Treat the model as a planner/reasoner, not an authorization authority. Policy is deterministic code.
 
 ### Phase 4 — Workflow and memory
-- [x] Compile workflow DAGs, validate native node types/dependencies/cycles, enforce max steps/time, and persist the bounded run result. Per-node audit detail is recorded; full transition/event history remains future work.
+- [x] Compile workflow DAGs, validate native node types/dependencies/cycles, enforce max steps/time, resolve explicit prior-step output references, and persist the bounded run result. Per-node audit detail is recorded; full transition/event history remains future work.
 - [ ] Add memory write/retrieval APIs with provenance, expiry, sensitivity filtering, and workspace scope.
 - [x] Block workflow nodes that declare a human approval gate until a separate approval-resume mechanism exists. Durable approval/resume is still pending.
 
