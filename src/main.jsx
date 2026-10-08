@@ -45,6 +45,11 @@ function Dashboard({ user, workspace, onSignOut }) {
     return () => { alive = false; };
   }, [workspace?.id]);
   const [showCreate, setShowCreate] = useState(false);
+  const [showRun, setShowRun] = useState(false);
+  const [selectedRunAgent, setSelectedRunAgent] = useState(null);
+  const [runInput, setRunInput] = useState('');
+  const [runOutput, setRunOutput] = useState(null);
+  const [runBusy, setRunBusy] = useState(false);
   const [draft, setDraft] = useState({ name: '', purpose: '', instructions: '' });
   const [notice, setNotice] = useState('');
   const [tasks, setTasks] = useState([
@@ -68,7 +73,8 @@ function Dashboard({ user, workspace, onSignOut }) {
     }
     const { data, error } = await supabase.from('agents').insert({
       workspace_id: workspace.id, name: draft.name.trim(), purpose: draft.purpose.trim(),
-      instructions: draft.instructions, created_by: user.id, status: 'draft'
+      instructions: draft.instructions, model_provider: 'openai', model_name: 'gpt-4.1-mini',
+      created_by: user.id, status: 'draft'
     }).select('id,name,purpose,instructions,model_name,status').single();
     if (error) { setNotice('Gagal menyimpan agent: ' + error.message); return; }
     await supabase.from('audit_events').insert({
@@ -79,7 +85,35 @@ function Dashboard({ user, workspace, onSignOut }) {
     setDraft({ name: '', purpose: '', instructions: '' });
     setShowCreate(false);
     setActive('agents');
-    setNotice('Draft agent tersimpan di database workspace. Eksekusi tetap dinonaktifkan sampai runtime dikonfigurasi.');
+    setNotice('Draft agent tersimpan di database workspace. Kirim untuk review sebelum disetujui dan dijalankan.');
+  }
+
+  async function changeAgentStatus(agent, nextStatus) {
+    const { data, error } = await supabase.rpc('set_agent_status', { p_agent_id: agent.id, p_status: nextStatus });
+    if (error) { setNotice('Perubahan status ditolak: ' + error.message); return; }
+    const row = Array.isArray(data) ? data[0] : data;
+    setAgents(prev => prev.map(a => a.id === agent.id ? { ...a, status: row?.status || nextStatus } : a));
+    setNotice('Status agent ' + agent.name + ' diperbarui menjadi ' + (row?.status || nextStatus) + '.');
+  }
+
+  async function runSelectedAgent(e) {
+    e.preventDefault();
+    if (!selectedRunAgent || !runInput.trim()) return;
+    setRunBusy(true); setRunOutput(null);
+    const { data, error } = await supabase.functions.invoke('agent-run', {
+      body: { agent_id: selectedRunAgent.id, input: runInput.trim() }
+    });
+    setRunBusy(false);
+    if (error) {
+      const context = error.context;
+      let detail = error.message || 'Eksekusi gagal.';
+      if (context && typeof context.json === 'function') {
+        try { const body = await context.json(); detail = body.reason || body.error || detail; } catch { /* keep fallback */ }
+      }
+      setRunOutput({ error: detail });
+      return;
+    }
+    setRunOutput(data || { error: 'Server tidak mengembalikan hasil.' });
   }
 
   return <div className="shell">
@@ -105,13 +139,14 @@ function Dashboard({ user, workspace, onSignOut }) {
         </>}
         {active === 'directory' && <><PageHeader eyebrow="DISCOVER / CATALOG" title="AI Directory" subtitle="Cari tools, agent, dan koleksi skill dari sumber yang dapat ditelusuri." action={<span className="muted-tag">SOURCE-LINKED</span>}/><div className="search-row"><div className="search-box"><Search size={18}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search tools, agents, frameworks…"/></div><select value={filter} onChange={e=>setFilter(e.target.value)}><option>All</option><option>Skills</option><option>Agents</option><option>Tools</option><option>Infrastructure</option></select></div><div className="result-count">{catalog.length} resources · sumber dan lisensi ditampilkan secara eksplisit</div><div className="catalog-grid">{catalog.map(item=><SourceCard key={item.name} item={item}/>)}</div></>}
         {active === 'skills' && <><PageHeader eyebrow="DISCOVER / EXTENSIONS" title="Skills Studio" subtitle="Kelola metadata dan proses review skill sebelum pemasangan." action={<button className="primary" onClick={()=>setNotice('Import skill memerlukan parser, pemeriksaan lisensi, validasi manifest, dan sandbox. Belum diaktifkan.') }><Plus size={16}/> Import skill</button>}/><div className="status-banner compact"><ShieldCheck size={19}/><div><b>Review before install</b><p>Skill pihak ketiga tidak dijalankan otomatis. Verifikasi sumber, lisensi, akses tool, dan instruksi sebelum menyetujuinya.</p></div></div><div className="catalog-grid">{initialCatalog.filter(x=>x.category==='Skills'||x.category==='Infrastructure').map(item=><SourceCard key={item.name} item={item}/>)}</div><div className="panel"><h3>Skill approval checklist</h3><div className="checklist"><span><CheckCircle2/> Provenance & source URL</span><span><CheckCircle2/> License and redistribution terms</span><span><CheckCircle2/> Requested tools and permissions</span><span><CheckCircle2/> Static security review</span><span><LockKeyhole/> Sandboxed test before activation</span></div></div></>}
-        {active === 'agents' && <><PageHeader eyebrow="BUILD / CONFIGURATION" title="Agent Builder" subtitle="Definisikan tujuan, instruksi, dan konfigurasi agent sebelum menghubungkan runtime." action={<button className="primary" onClick={()=>setShowCreate(true)}><Plus size={17}/> New agent</button>}/><div className="agent-list">{agents.map(a=><div className="agent-card" key={a.id}><div className="agent-icon"><Bot size={22}/></div><div className="agent-info"><div className="agent-title"><h3>{a.name}</h3><span className="draft-pill">{a.status}</span></div><p>{a.description}</p><div className="agent-meta"><span><Sparkles size={14}/>{a.model}</span><span><Wrench size={14}/> Tools: none</span></div></div><button className="secondary small-btn" onClick={()=>setNotice('Agent '+a.name+' masih berupa definisi lokal. Eksekusi tersedia setelah provider dan runtime aman tersambung.')}>Configure <span>→</span></button></div>)}</div><div className="panel"><h3>Execution contract</h3><p className="muted-copy">Agent tidak dapat berjalan hanya karena definisinya tersimpan. Implementasi berikutnya menghubungkan model provider, tool registry, secret storage, batas biaya, dan runtime terisolasi.</p></div></>}
+        {active === 'agents' && <><PageHeader eyebrow="BUILD / CONFIGURATION" title="Agent Builder" subtitle="Definisikan tujuan, instruksi, dan konfigurasi agent sebelum menghubungkan runtime." action={<button className="primary" onClick={()=>setShowCreate(true)}><Plus size={17}/> New agent</button>}/><div className="agent-list">{agents.map(a=><div className="agent-card" key={a.id}><div className="agent-icon"><Bot size={22}/></div><div className="agent-info"><div className="agent-title"><h3>{a.name}</h3><span className="draft-pill">{a.status}</span></div><p>{a.description}</p><div className="agent-meta"><span><Sparkles size={14}/>{a.model}</span><span><Wrench size={14}/> Tools: none</span></div></div><div className="agent-actions">{a.status === 'Draft' || a.status === 'disabled' ? <button className="secondary small-btn" onClick={()=>changeAgentStatus(a,'review')}>Send to review</button> : null}{a.status === 'review' && ['owner','admin'].includes(workspace?.role) ? <button className="primary small-btn" onClick={()=>changeAgentStatus(a,'approved')}>Approve</button> : null}{a.status === 'approved' ? <button className="primary small-btn" onClick={()=>{setSelectedRunAgent(a);setRunInput('');setRunOutput(null);setShowRun(true)}}>Run test</button> : null}{['owner','admin'].includes(workspace?.role) && a.status === 'approved' ? <button className="secondary small-btn" onClick={()=>changeAgentStatus(a,'disabled')}>Disable</button> : null}</div></div>)}</div><div className="panel"><h3>Execution contract</h3><p className="muted-copy">Agent tidak dapat berjalan hanya karena definisinya tersimpan. Implementasi berikutnya menghubungkan model provider, tool registry, secret storage, batas biaya, dan runtime terisolasi.</p></div></>}
         {active === 'workflows' && <><PageHeader eyebrow="BUILD / ORCHESTRATION" title="Orchestrator" subtitle="Rancang alur multi-step dan multi-agent dengan persetujuan di titik kritis." action={<button className="primary" onClick={()=>setNotice('Workflow editor akan dibuat dengan state persistence, node validation, retry policy, dan approval gates. Runner belum aktif.') }><Plus size={17}/> New workflow</button>}/><div className="workflow-canvas"><div className="canvas-top"><span><GitBranch size={16}/> Untitled workflow</span><span className="draft-pill">Not deployed</span></div><div className="flow-nodes"><FlowNode icon={Sparkles} title="Input" subtitle="User request" /><div className="connector"/><FlowNode icon={Bot} title="Agent step" subtitle="Model + tools" /><div className="connector"/><FlowNode icon={FileCheck2} title="Review gate" subtitle="Human approval" /><div className="connector"/><FlowNode icon={CheckCircle2} title="Output" subtitle="Validated result" /></div><p className="canvas-foot">Conceptual workflow preview · not executable</p></div><div className="metric-grid"><Metric icon={Workflow} label="Workflow drafts" value="0" sub="Belum disimpan" /><Metric icon={GitBranch} label="Approval gates" value="Design" sub="Human-in-the-loop" /><Metric icon={Activity} label="Runs" value="0" sub="Runner belum terhubung" /></div></>}
         {active === 'runtime' && <><PageHeader eyebrow="OPERATE / SECURITY" title="Secure Runtime" subtitle="Lapisan eksekusi agent dengan isolasi, izin minimum, dan batas resource." action={<span className="off-pill"><i/> DISABLED</span>}/><div className="runtime-hero"><div className="runtime-lock"><ShieldCheck size={30}/></div><div><h2>Execution is locked by default</h2><p>Belum ada kode agent atau skill pihak ketiga yang dijalankan. Ini disengaja sampai konfigurasi keamanan diverifikasi.</p></div></div><div className="security-grid">{[['Provider secrets','Simpan di server secret manager; jangan expose ke browser.'],['Sandbox isolation','Jalankan tool dalam lingkungan terisolasi dengan batas waktu dan resource.'],['Least privilege','Berikan hanya tool dan scope yang dibutuhkan agent.'],['Network controls','Batasi egress, host tujuan, ukuran payload, dan waktu eksekusi.'],['Budget limits','Tentukan limit token, biaya, concurrency, dan durasi per run.'],['Approval gates','Minta persetujuan sebelum aksi eksternal atau perubahan data.']].map(([t,d])=><div className="security-card" key={t}><LockKeyhole size={18}/><b>{t}</b><p>{d}</p><span className="task-state">Needs implementation</span></div>)}</div></>}
         {active === 'evaluation' && <><PageHeader eyebrow="OPERATE / QUALITY" title="Evaluation & Audit" subtitle="Rencanakan pengukuran kualitas, biaya, keandalan, dan jejak tindakan agent." action={<button className="secondary" onClick={()=>setNotice('Evaluasi belum dijalankan: belum ada runtime atau hasil run untuk dinilai.')}>Run evaluation</button>}/><div className="metric-grid"><Metric icon={CheckCircle2} label="Test cases" value="0" sub="Belum dibuat" /><Metric icon={Activity} label="Success rate" value="—" sub="Belum ada eksekusi" /><Metric icon={Database} label="Audit events" value="0" sub="Storage belum terhubung" /><Metric icon={Wrench} label="Tool errors" value="—" sub="Runtime belum aktif" /></div><div className="panel"><h3>Evaluation plan</h3>{['Correctness and groundedness','Tool-call schema and permission checks','Prompt-injection and untrusted-input tests','Latency, token usage, and budget limits','Regression tests for each agent revision'].map((x,i)=><div className="task-row" key={x}><div className="task-check"><span>{i+1}</span></div><div className="task-name">{x}</div><span className="task-state">Planned</span></div>)}</div><div className="panel"><h3>Audit event schema (planned)</h3><p className="muted-copy">actor · workspace · agent_version · action · tool · permission_decision · timestamp · result · latency · usage · correlation_id</p></div></>}
         {active === 'governance' && <><PageHeader eyebrow="ADMIN / TRUST" title="Governance & access" subtitle="Kontrol workspace, izin berbasis peran, provenance, dan pengelolaan secret." action={<span className="muted-tag">OWNER VIEW</span>}/><div className="security-grid">{[['Workspace isolation','Data dan konfigurasi tiap workspace harus dipisahkan.'],['Role-based access','Owner, Admin, Builder, Operator, Reviewer, Viewer.'],['Secret management','Kredensial provider hanya tersedia pada server runtime.'],['Audit trail','Catat perubahan konfigurasi dan keputusan akses.'],['License registry','Simpan sumber, versi, lisensi, dan pemeriksaan terakhir.'],['Data retention','Tetapkan masa simpan log, ekspor, dan penghapusan.']].map(([t,d])=><div className="security-card" key={t}><ShieldCheck size={18}/><b>{t}</b><p>{d}</p><span className="task-state">Design defined</span></div>)}</div><div className="panel"><h3>Connected identity</h3><div className="identity-row"><div className="avatar">Y</div><div><b>Yudi8377</b><p>GitHub repository owner · Agent OS workspace preview</p></div><span className="good-pill">Verified</span></div><p className="muted-copy">Identitas tampilan ini belum menjadi sistem autentikasi aplikasi. Implementasi produksi memerlukan autentikasi server, sesi aman, dan RBAC yang diverifikasi di backend.</p></div></>}
       </div>
     </main>
+    {showRun && selectedRunAgent && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget&&!runBusy)setShowRun(false)}}><form className="modal" onSubmit={runSelectedAgent}><div className="modal-head"><div><span className="eyebrow">SECURE RUNTIME</span><h2>Run {selectedRunAgent.name}</h2></div><button type="button" className="icon-btn" disabled={runBusy} onClick={()=>setShowRun(false)}><X/></button></div><p className="muted-copy">Hanya agent berstatus approved yang dapat dijalankan. Input dibatasi 12.000 karakter; eksekusi tidak memiliki akses tools eksternal.</p><label>Prompt<input required maxLength={12000} value={runInput} onChange={e=>setRunInput(e.target.value)} placeholder="Apa yang ingin dikerjakan agent ini?"/></label>{runOutput && <div className="run-result"><b>{runOutput.error ? 'Run belum berhasil' : 'Hasil agent'}</b><pre>{runOutput.error || runOutput.output || JSON.stringify(runOutput,null,2)}</pre>{runOutput.run_id && <small>Run ID: {runOutput.run_id}</small>}</div>}<div className="modal-actions"><button type="button" className="secondary" disabled={runBusy} onClick={()=>setShowRun(false)}>Close</button><button className="primary" disabled={runBusy||!runInput.trim()} type="submit">{runBusy?'Running…':'Run agent'}</button></div></form></div>}
     {showCreate && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setShowCreate(false)}}><form className="modal" onSubmit={createAgent}><div className="modal-head"><div><span className="eyebrow">AGENT BUILDER</span><h2>Create agent draft</h2></div><button type="button" className="icon-btn" onClick={()=>setShowCreate(false)}><X/></button></div><label>Agent name<input required value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})} placeholder="e.g. Research Assistant"/></label><label>Purpose<input required value={draft.purpose} onChange={e=>setDraft({...draft,purpose:e.target.value})} placeholder="What should this agent help with?"/></label><label>Instructions<textarea value={draft.instructions} onChange={e=>setDraft({...draft,instructions:e.target.value})} placeholder="Define behavior, boundaries, and output format…" rows={4}/></label><div className="modal-warning"><LockKeyhole size={16}/> This creates a local draft only. No model calls or external actions will run.</div><div className="modal-actions"><button type="button" className="secondary" onClick={()=>setShowCreate(false)}>Cancel</button><button className="primary" type="submit"><Plus size={16}/> Save draft</button></div></form></div>}
   </div>;
 }
@@ -183,7 +218,7 @@ function App() {
         p_slug: slug
       }).single();
       if (wsError) throw wsError;
-      setWorkspace(ws);
+      setWorkspace({ ...ws, role: 'owner' });
     } catch (err) { setMessage('Workspace belum dibuat: ' + (err.message || 'kesalahan tidak diketahui')); }
     finally { setBusy(false); }
   }
