@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { supabase, supabaseConfigured } from './lib/supabase';
 import { createRoot } from 'react-dom/client';
 import {
   Activity, AppWindow, Bot, Boxes, CheckCircle2, ChevronDown, CircleHelp,
@@ -26,11 +27,23 @@ const initialCatalog = [
   { name: 'Sandbox Execution', type: 'Runtime capability', category: 'Infrastructure', source: 'Agent OS architecture', license: 'Needs integration', url: 'https://github.com/Yudi8377/AGENT-OS', detail: 'Eksekusi terisolasi belum aktif sampai runtime dikonfigurasi.' }
 ];
 
-function App() {
+function Dashboard({ user, workspace, onSignOut }) {
   const [active, setActive] = useState('overview');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('All');
-  const [agents, setAgents] = useState([{ id: 1, name: 'Research Assistant', model: 'Belum tersambung', status: 'Draft', description: 'Menganalisis sumber dan merangkum temuan dengan sitasi.' }]);
+  const [agents, setAgents] = useState([]);
+  useEffect(() => {
+    if (!supabase || !workspace?.id) return;
+    let alive = true;
+    supabase.from('agents').select('id,name,purpose,instructions,model_provider,model_name,status')
+      .eq('workspace_id', workspace.id).order('updated_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error) { setNotice('Gagal memuat agent: ' + error.message); return; }
+        setAgents((data || []).map(a => ({ id: a.id, name: a.name, model: a.model_name || 'Belum tersambung', status: a.status === 'draft' ? 'Draft' : a.status, description: a.purpose, instructions: a.instructions })));
+      });
+    return () => { alive = false; };
+  }, [workspace?.id]);
   const [showCreate, setShowCreate] = useState(false);
   const [draft, setDraft] = useState({ name: '', purpose: '', instructions: '' });
   const [notice, setNotice] = useState('');
@@ -46,20 +59,33 @@ function App() {
     return matchesQuery && (filter === 'All' || item.category === filter);
   }), [query, filter]);
 
-  function createAgent(e) {
+  async function createAgent(e) {
     e.preventDefault();
     if (!draft.name.trim() || !draft.purpose.trim()) return;
-    setAgents(prev => [...prev, { id: Date.now(), name: draft.name.trim(), model: 'Belum tersambung', status: 'Draft', description: draft.purpose.trim(), instructions: draft.instructions }]);
+    if (!supabase || !workspace?.id || !user?.id) {
+      setNotice('Database belum dikonfigurasi atau sesi tidak tersedia. Draft tidak disimpan.');
+      return;
+    }
+    const { data, error } = await supabase.from('agents').insert({
+      workspace_id: workspace.id, name: draft.name.trim(), purpose: draft.purpose.trim(),
+      instructions: draft.instructions, created_by: user.id, status: 'draft'
+    }).select('id,name,purpose,instructions,model_name,status').single();
+    if (error) { setNotice('Gagal menyimpan agent: ' + error.message); return; }
+    await supabase.from('audit_events').insert({
+      workspace_id: workspace.id, actor_id: user.id, action: 'agent.created',
+      entity_type: 'agent', entity_id: data.id, details: { name: data.name }
+    });
+    setAgents(prev => [{ id: data.id, name: data.name, model: data.model_name || 'Belum tersambung', status: 'Draft', description: data.purpose, instructions: data.instructions }, ...prev]);
     setDraft({ name: '', purpose: '', instructions: '' });
     setShowCreate(false);
     setActive('agents');
-    setNotice('Draft agent disimpan di sesi browser ini. Belum tersimpan ke server dan belum dapat dieksekusi.');
+    setNotice('Draft agent tersimpan di database workspace. Eksekusi tetap dinonaktifkan sampai runtime dikonfigurasi.');
   }
 
   return <div className="shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><Command size={21}/></div><div><strong>AGENT<span>OS</span></strong><small>UNIFIED AGENT PLATFORM</small></div></div>
-      <div className="workspace-switch"><div className="workspace-icon"><Boxes size={17}/></div><div><b>Personal Workspace</b><small>Starter environment</small></div><ChevronDown size={15}/></div>
+      <div className="workspace-switch"><div className="workspace-icon"><Boxes size={17}/></div><div><b>{workspace?.name || 'Workspace'}</b><small>{user?.email || 'Signed in'}</small></div><ChevronDown size={15}/></div>
       {['WORKSPACE', 'DISCOVER', 'BUILD', 'OPERATE', 'ADMIN'].map(group => <div className="nav-group" key={group}>
         <div className="nav-label">{group}</div>
         {modules.filter(m => m.group === group).map(m => <button key={m.id} className={'nav-item ' + (active === m.id ? 'selected' : '')} onClick={() => { setActive(m.id); setNotice(''); }}><m.icon size={17}/><span>{m.label}</span>{m.id === 'agents' && <em>{agents.length}</em>}</button>)}
