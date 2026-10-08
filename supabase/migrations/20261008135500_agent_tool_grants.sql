@@ -23,7 +23,7 @@ create policy "agent_tool_grants_manage_admins" on public.agent_tool_grants for 
     and private.has_workspace_role(workspace_id, array['owner','admin'])
     and exists (
       select 1 from public.agents a
-      where a.id = agent_id and a.workspace_id = workspace_id
+      where a.id = agent_id and a.workspace_id = agent_tool_grants.workspace_id
     )
   );
 grant select, insert, update, delete on public.agent_tool_grants to authenticated;
