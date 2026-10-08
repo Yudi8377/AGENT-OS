@@ -13,6 +13,7 @@ Native-first does not mean pretending a model can be trained from scratch immedi
 - Deployed JWT-protected 'agent-run' Edge Function currently provides guarded text-only execution; it is not a sandbox and does not execute arbitrary tools or code.
 - Applied native schema for 'agent_skills', 'agent_tool_registry', 'agent_workflows', 'agent_memory', 'agent_evaluation_suites', and 'agent_evaluation_cases'. All are workspace-scoped and have RLS/role policies.
 - The native tool registry accepts only 'core.*' identifiers. Registry rows are declarative; they cannot supply executable code, arbitrary URLs, shell commands, or remote callbacks.
+- Edge Function 'agent-run' version 3 includes a compiled native dispatcher for four deterministic tools (text statistics, text truncation, numbered lines, JSON validation). Dispatch requires an approved registry entry and an active per-agent grant with matching permissions. Admin grant UI is not implemented yet.
 - Detailed design and phased delivery are documented in 'docs/native-agent-engine.md'.
 
 ## Native modules
