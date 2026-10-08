@@ -178,12 +178,11 @@ function App() {
       setMessage('Slug harus 3–60 karakter, huruf kecil, angka, atau tanda hubung.'); setBusy(false); return;
     }
     try {
-      const { data: ws, error: wsError } = await supabase.from('workspaces')
-        .insert({ name: workspaceName.trim(), slug, created_by: session.user.id }).select('id,name,slug').single();
+      const { data: ws, error: wsError } = await supabase.rpc('create_workspace', {
+        p_name: workspaceName.trim(),
+        p_slug: slug
+      }).single();
       if (wsError) throw wsError;
-      const { error: memberError } = await supabase.from('workspace_members')
-        .insert({ workspace_id: ws.id, user_id: session.user.id, role: 'owner' });
-      if (memberError) throw memberError;
       setWorkspace(ws);
     } catch (err) { setMessage('Workspace belum dibuat: ' + (err.message || 'kesalahan tidak diketahui')); }
     finally { setBusy(false); }
