@@ -1,6 +1,6 @@
 # Agent OS
 
-**Unified AI Agent Platform** — satu tempat untuk menemukan tools AI, mengelola skills, membangun agent, merancang workflow, menjalankan agent secara terisolasi, serta mengevaluasi dan mengaudit hasilnya.
+**Native AI Agent Platform** — membangun mesin agent sendiri: agent kernel, policy engine, native skills, tool registry, orchestrator, memory, runtime terkontrol, serta evaluation dan audit. Direktori pihak ketiga hanya bahan literasi, bukan ketergantungan runtime.
 
 > Status: aplikasi web sudah dipublikasikan melalui GitHub Pages; Supabase Auth/database, workspace RBAC, alur persetujuan agent, riwayat run, dan Edge Function `agent-run` telah disiapkan. Eksekusi model memerlukan secret server `OPENAI_API_KEY`; sandbox/tools eksternal belum tersedia.
 
@@ -17,17 +17,20 @@
 - Edge Function `agent-run` memvalidasi JWT, keanggotaan workspace, peran, dan status persetujuan. Ia hanya menjalankan panggilan model OpenAI tanpa tools; jika secret/provider belum siap, run ditandai blocked.
 - Untuk aktivasi model: tambahkan `OPENAI_API_KEY` pada Supabase → Project Settings / Edge Functions → Secrets. Jangan menaruh key di frontend atau Git. Panggilan model dapat menimbulkan biaya pada akun provider.
 - Konfigurasikan Supabase Auth URL Configuration: Site URL `https://yudi8377.github.io/AGENT-OS/` dan Redirect URL `https://yudi8377.github.io/AGENT-OS/**` agar konfirmasi email kembali ke aplikasi.
-- Belum siap untuk produksi penuh: belum ada sandbox eksekusi kode, tool registry, rate limiting berbasis kuota, workflow runner, evaluasi otomatis, dan pengujian penetrasi independen. Gunakan status ini sebagai limited beta, bukan layanan produksi kritis.
+- Arah produk dikunci sebagai native-first: AGENT-OS harus memiliki orkestrasi, policy, skills, tool registry, memory, evaluasi, dan lifecycle sendiri. Model backend akan dibuat dapat diganti dan opsi self-hosted open-weight direncanakan; tidak ada platform agent pihak ketiga yang menjadi orchestrator atau sumber kebenaran.
+- Fondasi skema native sudah diterapkan: `agent_skills`, `agent_tool_registry`, `agent_workflows`, `agent_memory`, `agent_evaluation_suites`, dan `agent_evaluation_cases`, seluruhnya workspace-scoped dengan RLS. Ini belum berarti workflow/tool runtime telah selesai.
+- Belum siap untuk produksi penuh: belum ada sandbox eksekusi kode, dispatcher tool native aktif, workflow runner, retrieval memory, evaluasi otomatis, resource isolation, dan pengujian penetrasi independen. Gunakan status ini sebagai limited beta, bukan layanan produksi kritis.
 
 ## Modul produk
 
-1. **AI Directory** — direktori tools, framework, dan agent; pencarian, kategori, sumber, serta status lisensi.
+1. **AI Directory (reference-only)** — katalog literasi dan provenance; tidak menjadi dependency atau pintu keluar utama produk.
 2. **Skills Studio** — katalog skill, validasi metadata, pratinjau, dan proses pemasangan yang eksplisit.
 3. **Agent Builder** — konfigurasi identitas agent, instruksi, model, tools, dan kebijakan.
-4. **Orchestrator** — rancangan workflow dan kolaborasi multi-agent.
-5. **Secure Runtime** — batas eksekusi, izin minimum, manajemen secret, dan isolasi sandbox.
+4. **Orchestrator** — workflow engine milik AGENT-OS dengan typed DAG, state durable, approval gate, retry terbatas, timeout, dan cancellation (bertahap).
+5. **Secure Runtime** — native policy + allowlisted tool dispatcher, secret isolation, batas resource, dan sandbox yang dibangun serta dikendalikan proyek.
 6. **Evaluation & Audit** — test cases, evaluasi hasil, jejak aktivitas, biaya, dan pemantauan.
-7. **Workspace & Governance** — ruang kerja, akses berbasis peran, persetujuan, serta audit perubahan.
+7. **Native Agent Core** — planner/kernel, policy engine, memory berprovenance, workflow state, dan tool handler internal.
+8. **Workspace & Governance** — ruang kerja, akses berbasis peran, persetujuan, serta audit perubahan.
 
 ## Sumber referensi
 
