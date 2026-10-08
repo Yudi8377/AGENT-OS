@@ -14,12 +14,12 @@
 - Tabel inti dengan RLS: `profiles`, `workspaces`, `workspace_members`, `agents`, `audit_events`, `agent_runs`.
 - Workspace dibuat secara atomik melalui RPC `create_workspace`; profil dan timestamp dikelola database.
 - Status agent: Draft → Review → Approved; hanya Owner/Admin dapat menyetujui atau menonaktifkan agent.
-- Edge Function `agent-run` memvalidasi JWT, keanggotaan workspace, peran, dan status persetujuan. Ia hanya menjalankan panggilan model OpenAI tanpa tools; jika secret/provider belum siap, run ditandai blocked.
+- Edge Function `agent-run` memvalidasi JWT, keanggotaan workspace, peran, dan status persetujuan. Ia menyediakan jalur native untuk tools deterministik dan workflow yang disetujui; jalur model generatif tetap memerlukan provider/secret yang dikonfigurasi.
 - Untuk aktivasi model: tambahkan `OPENAI_API_KEY` pada Supabase → Project Settings / Edge Functions → Secrets. Jangan menaruh key di frontend atau Git. Panggilan model dapat menimbulkan biaya pada akun provider.
 - Konfigurasikan Supabase Auth URL Configuration: Site URL `https://yudi8377.github.io/AGENT-OS/` dan Redirect URL `https://yudi8377.github.io/AGENT-OS/**` agar konfirmasi email kembali ke aplikasi.
 - Arah produk dikunci sebagai native-first: AGENT-OS harus memiliki orkestrasi, policy, skills, tool registry, memory, evaluasi, dan lifecycle sendiri. Model backend akan dibuat dapat diganti dan opsi self-hosted open-weight direncanakan; tidak ada platform agent pihak ketiga yang menjadi orchestrator atau sumber kebenaran.
 - Fondasi skema native sudah diterapkan: `agent_skills`, `agent_tool_registry`, `agent_tool_grants`, `agent_workflows`, `agent_memory`, `agent_evaluation_suites`, dan `agent_evaluation_cases`, seluruhnya workspace-scoped dengan RLS. Edge Function `agent-run` versi 3 juga memiliki dispatcher native untuk empat handler deterministik (`core.text.stats`, `core.text.truncate`, `core.text.lines`, `core.json.validate`), dengan allowlist kode, status tool approved, grant per-agent, permission checks, limit input/output, dan audit run. Belum ada UI administrasi grant, planner LLM-native, atau workflow runner lengkap.
-- Belum siap untuk produksi penuh: belum ada sandbox eksekusi kode, UI pemberian grant tool, planner/agent loop umum, workflow runner lengkap, retrieval memory, evaluasi otomatis, resource isolation, dan pengujian penetrasi independen. Gunakan status ini sebagai limited beta, bukan layanan produksi kritis.
+- Belum siap untuk produksi penuh: belum ada sandbox eksekusi kode, agent loop umum berbasis observe/plan/act, retrieval memory yang terintegrasi ke planner, evaluasi otomatis end-to-end, resource isolation, durable pause/resume approval, dan pengujian penetrasi independen. Grant tool harus dikelola melalui data yang telah disetujui; gunakan status ini sebagai limited beta, bukan layanan produksi kritis.
 
 ## Modul produk
 
