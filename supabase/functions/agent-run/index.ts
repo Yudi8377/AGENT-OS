@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.0";
-import { executeNativeTool, NATIVE_TOOL_REGISTRY, resolveWorkflowInput, validateWorkflow, type CoreToolKey, type NativeToolContext, type WorkflowDefinition } from "./native-kernel.ts";
+import { executeNativeTool, NATIVE_TOOL_REGISTRY, planNativeGoal, resolveWorkflowInput, validateWorkflow, type CoreToolKey, type NativeToolContext, type WorkflowDefinition } from "./native-kernel.ts";
 
 const ALLOWED_ORIGIN = "https://yudi8377.github.io";
 const corsHeaders = {
@@ -34,7 +34,7 @@ Deno.serve(async (req: Request) => {
   const contentLength = Number(req.headers.get("content-length") || "0");
   if (contentLength > 20000) return respond(413, { error: "REQUEST_TOO_LARGE" });
 
-  let body: { agent_id?: unknown; input?: unknown; tool_key?: unknown; tool_input?: unknown; workflow_id?: unknown };
+  let body: { agent_id?: unknown; input?: unknown; tool_key?: unknown; tool_input?: unknown; workflow_id?: unknown; goal?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -42,16 +42,23 @@ Deno.serve(async (req: Request) => {
   }
 
   const agentId = typeof body.agent_id === "string" ? body.agent_id : "";
-  const toolKey = typeof body.tool_key === "string" ? body.tool_key : "";
-  const nativeToolRequested = toolKey.length > 0;
+  const goalText = typeof body.goal === "string" ? body.goal.trim() : "";
+  const goalRequested = goalText.length > 0;
+  const goalPlanResult = goalRequested ? planNativeGoal(goalText) : null;
+  if (goalRequested && !goalPlanResult?.ok) {
+    return respond(400, { error: goalPlanResult?.error || "GOAL_PLAN_FAILED", supported_intents: goalPlanResult && !goalPlanResult.ok ? goalPlanResult.supportedIntents : [] });
+  }
+  const requestedToolKey = typeof body.tool_key === "string" ? body.tool_key : "";
+  const toolKey = goalRequested && goalPlanResult?.ok ? goalPlanResult.plan.steps[0].tool : requestedToolKey;
+  const nativeToolRequested = toolKey.length > 0 || goalRequested;
   const workflowId = typeof body.workflow_id === "string" ? body.workflow_id : "";
   const workflowRequested = workflowId.length > 0;
-  const nativeToolInput = body.tool_input;
+  const nativeToolInput = goalRequested && goalPlanResult?.ok ? goalPlanResult.plan.steps[0].input : body.tool_input;
   if (nativeToolRequested && (!Object.hasOwn(NATIVE_TOOL_REGISTRY, toolKey) || !nativeToolInput || typeof nativeToolInput !== "object" || Array.isArray(nativeToolInput))) {
     return respond(400, { error: "INVALID_NATIVE_TOOL_REQUEST" });
   }
-  const input = nativeToolRequested
-    ? JSON.stringify(nativeToolInput)
+  const input = goalRequested ? goalText
+    : nativeToolRequested ? JSON.stringify(nativeToolInput)
     : workflowRequested ? `workflow:${workflowId}`
     : typeof body.input === "string" ? body.input.trim() : "";
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(agentId)) {
@@ -273,6 +280,7 @@ Deno.serve(async (req: Request) => {
     });
     return respond(nativeResult.ok ? 200 : 400, {
       run_id: run.id, status: runStatus, native: true, tool: toolKey,
+      ...(goalRequested && goalPlanResult?.ok ? { plan: goalPlanResult.plan } : {}),
       result: nativeResult, duration_ms: durationMs,
     });
   }
