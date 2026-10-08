@@ -5,8 +5,8 @@ const context: NativeToolContext = {
   workspaceId: "workspace-test",
   agentApproved: true,
   workspaceRole: "admin",
-  grantedPermissions: ["text:read", "json:validate"],
-  allowedTools: ["core.text.stats", "core.text.truncate", "core.text.lines", "core.json.validate"],
+  grantedPermissions: ["text:read", "json:validate", "math:calculate"],
+  allowedTools: ["core.text.stats", "core.text.truncate", "core.text.lines", "core.json.validate", "core.math.calculate"],
 };
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -75,4 +75,17 @@ Deno.test("workflow references reject unavailable or unsafe paths", () => {
     first: { ok: true, data: {} },
   });
   assert(!unsafe.ok && unsafe.error === "WORKFLOW_REFERENCE_INVALID", "expected unsafe path rejection");
+});
+
+Deno.test("native math parser respects arithmetic precedence and parentheses", () => {
+  const result = executeNativeTool("core.math.calculate", { expression: "(2 + 3) * 4 - 6 / 2" }, context);
+  assert(result.ok, "expected calculation to succeed");
+  assert((result.data as Record<string, unknown>).result === 17, "expected result 17");
+});
+
+Deno.test("native math parser rejects code and division by zero", () => {
+  const code = executeNativeTool("core.math.calculate", { expression: "globalThis.process()" }, context);
+  assert(!code.ok, "expected code-like input to be rejected");
+  const zero = executeNativeTool("core.math.calculate", { expression: "12 / 0" }, context);
+  assert(!zero.ok && zero.error?.code === "MATH_DIVISION_BY_ZERO", "expected division by zero rejection");
 });
