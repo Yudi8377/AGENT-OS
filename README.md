@@ -2,7 +2,17 @@
 
 **Unified AI Agent Platform** — satu tempat untuk menemukan tools AI, mengelola skills, membangun agent, merancang workflow, menjalankan agent secara terisolasi, serta mengevaluasi dan mengaudit hasilnya.
 
-> Status: fondasi aplikasi dan arsitektur awal. Runtime produksi, konektor model, eksekusi terisolasi, serta penyimpanan persisten harus dikonfigurasi sebelum dipakai untuk tugas nyata.
+> Status: fondasi aplikasi aktif dengan Supabase Auth/database, workspace RBAC, alur persetujuan agent, riwayat run, dan Edge Function `agent-run`. Eksekusi model memerlukan konfigurasi secret `OPENAI_API_KEY` dan model OpenAI pada agent; sandbox/tools eksternal belum tersedia.
+
+## Status implementasi saat ini
+
+- Supabase project: `tgicltoykzpsridyhvci` (region Singapore).
+- Tabel inti dengan RLS: `profiles`, `workspaces`, `workspace_members`, `agents`, `audit_events`, `agent_runs`.
+- Workspace dibuat secara atomik melalui RPC `create_workspace`; profil dan timestamp dikelola database.
+- Status agent: Draft → Review → Approved; hanya Owner/Admin dapat menyetujui atau menonaktifkan agent.
+- Edge Function `agent-run` memvalidasi JWT, keanggotaan workspace, peran, dan status persetujuan. Ia hanya menjalankan panggilan model OpenAI tanpa tools; jika secret/provider belum siap, run ditandai blocked.
+- Sebelum uji model: atur secret `OPENAI_API_KEY` di Supabase Edge Function Secrets. Jangan menaruh key di frontend atau Git.
+- Belum siap produksi: belum ada sandbox eksekusi kode, tool registry, rate limiting berbasis kuota, workflow runner, dan evaluasi otomatis.
 
 ## Modul produk
 
