@@ -1,4 +1,4 @@
-import { authorizeNativeTool, executeNativeTool, validateWorkflow, type NativeToolContext } from "./native-kernel.ts";
+import { authorizeNativeTool, executeNativeTool, resolveWorkflowInput, validateWorkflow, type NativeToolContext } from "./native-kernel.ts";
 
 const context: NativeToolContext = {
   actorId: "actor-test",
@@ -54,4 +54,25 @@ Deno.test("workflow validator returns dependency-safe order", () => {
   ] });
   assert(result.ok, "expected valid DAG");
   assert(result.orderedNodes[0].id === "first", "dependencies must execute before consumers");
+});
+
+Deno.test("workflow references map prior node output into later node input", () => {
+  const resolved = resolveWorkflowInput({
+    text: { $ref: "first.data.summary" },
+    options: { count: { $ref: "first.data.words" } },
+  }, {
+    first: { ok: true, data: { summary: "hello world", words: 2 } },
+  });
+  assert(resolved.ok, "expected references to resolve");
+  assert(resolved.value.text === "hello world", "expected string output mapping");
+  assert((resolved.value.options as Record<string, unknown>).count === 2, "expected nested number output mapping");
+});
+
+Deno.test("workflow references reject unavailable or unsafe paths", () => {
+  const unavailable = resolveWorkflowInput({ text: { $ref: "later.data.text" } }, {});
+  assert(!unavailable.ok && unavailable.error === "WORKFLOW_REFERENCE_SOURCE_UNAVAILABLE", "expected unavailable source rejection");
+  const unsafe = resolveWorkflowInput({ text: { $ref: "first.constructor.prototype" } }, {
+    first: { ok: true, data: {} },
+  });
+  assert(!unsafe.ok && unsafe.error === "WORKFLOW_REFERENCE_INVALID", "expected unsafe path rejection");
 });
