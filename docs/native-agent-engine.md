@@ -41,16 +41,17 @@ AGENT-OS is the product and control plane. It must not be a thin wrapper, affili
 - [ ] Add server-side policy decision function and append-only policy audit events.
 
 ### Phase 2 — Deterministic kernel
-- [ ] Define typed Plan, Step, ToolCall, Observation, and RunResult contracts.
-- [ ] Build run state transitions: queued → planning → awaiting_approval/running → succeeded/failed/cancelled/timed_out.
+- [x] Define typed native plan and step contracts for the first deterministic planner slice; broader Plan/Observation/RunResult state contracts remain pending.
+- [ ] Build the complete run state machine: queued → planning → awaiting_approval/running → succeeded/failed/cancelled/timed_out.
 - [ ] Implement bounded step loop, idempotency keys, cancellation, deadline, and structured errors.
 - [x] Add native handlers: text statistics/truncation/line splitting, JSON validation, and bounded arithmetic calculation.
 - [x] Add safe workflow output references (`{ "$ref": "stepId.data.field" }`) with prior-step checks and no expression evaluation.
+- [x] Add a deterministic goal router for explicit `math:`, `text-stats:`, `text-lines:`, and `json-validate:` requests; unsupported goals are rejected instead of guessed.
 - [ ] Add retrieval from workspace knowledge.
 - [ ] Do not add shell, unrestricted filesystem, arbitrary HTTP, or dynamic code evaluation.
 
 ### Phase 3 — Model independence
-- [ ] Introduce an inference adapter interface; provider-specific code stays behind the interface.
+- [ ] Introduce an inference adapter interface; provider-specific code stays behind the interface. The current native goal router is deterministic and does not use model inference.
 - [ ] Add a self-hosted open-weight model endpoint on project-controlled infrastructure as a deployable option.
 - [ ] Keep a deterministic non-LLM fallback for schema validation, routing, and safe utility tools.
 - [ ] Treat the model as a planner/reasoner, not an authorization authority. Policy is deterministic code.
