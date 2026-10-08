@@ -216,6 +216,48 @@ Deno.serve(async (req: Request) => {
     return respond(200, { run_id: run.id, status: "succeeded", workflow: workflow.name, node_results: nodeResults, duration_ms: durationMs });
   }
 
+  if (goalRequested && goalPlanResult?.ok && goalPlanResult.plan.steps.length > 1) {
+    const plan = goalPlanResult.plan;
+    const stepResults: Record<string, unknown> = {};
+    for (const step of plan.steps) {
+      if (step.dependsOn.some((dependency) => !(stepResults[dependency] as { ok?: boolean } | undefined)?.ok)) {
+        await admin.from("agent_runs").update({ status: "blocked", error_code: "GOAL_STEP_DEPENDENCY_FAILED", output_text: JSON.stringify(stepResults).slice(0, 50000), duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
+        return respond(409, { error: "GOAL_STEP_DEPENDENCY_FAILED", run_id: run.id, step_results: stepResults });
+      }
+      const { data: toolDefinition, error: definitionError } = await admin.from("agent_tool_registry")
+        .select("tool_key,required_permissions,status,risk_level").eq("workspace_id", agent.workspace_id)
+        .eq("tool_key", step.tool).eq("status", "approved").maybeSingle();
+      const { data: grant, error: grantError } = await admin.from("agent_tool_grants")
+        .select("granted_permissions,status").eq("workspace_id", agent.workspace_id)
+        .eq("agent_id", agent.id).eq("tool_key", step.tool).eq("status", "active").maybeSingle();
+      if (definitionError || grantError || !toolDefinition || !grant) {
+        const code = definitionError || grantError ? "GOAL_STEP_AUTH_LOOKUP_FAILED" : "GOAL_STEP_TOOL_NOT_GRANTED";
+        await admin.from("agent_runs").update({ status: "blocked", error_code: code, output_text: JSON.stringify({ completed: stepResults, blocked_step: step.id }).slice(0, 50000), duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
+        await admin.from("audit_events").insert({ workspace_id: agent.workspace_id, actor_id: user.id, action: "agent.goal_step_blocked", entity_type: "agent_run", entity_id: run.id, details: { agent_id: agent.id, step_id: step.id, tool_key: step.tool, reason: code } });
+        return respond(definitionError || grantError ? 503 : 403, { error: code, run_id: run.id, completed: stepResults, blocked_step: step.id, required_tool: step.tool });
+      }
+      const required = Array.isArray(toolDefinition.required_permissions) ? toolDefinition.required_permissions : [];
+      const granted = Array.isArray(grant.granted_permissions) ? grant.granted_permissions : [];
+      if (!required.every((permission: string) => granted.includes(permission))) {
+        await admin.from("agent_runs").update({ status: "blocked", error_code: "GOAL_STEP_PERMISSION_DENIED", output_text: JSON.stringify({ completed: stepResults, blocked_step: step.id }).slice(0, 50000), duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
+        return respond(403, { error: "GOAL_STEP_PERMISSION_DENIED", run_id: run.id, completed: stepResults, blocked_step: step.id, required_tool: step.tool });
+      }
+      const context: NativeToolContext = { actorId: user.id, workspaceId: agent.workspace_id, agentApproved: agent.status === "approved", workspaceRole: membership.role, grantedPermissions: granted, allowedTools: [step.tool] };
+      const result = executeNativeTool(step.tool, step.input, context);
+      stepResults[step.id] = { ok: result.ok, tool: result.tool, data: result.data, error: result.error, duration_ms: result.durationMs };
+      await admin.from("audit_events").insert({ workspace_id: agent.workspace_id, actor_id: user.id, action: result.ok ? "agent.goal_step_succeeded" : "agent.goal_step_failed", entity_type: "agent_run", entity_id: run.id, details: { agent_id: agent.id, step_id: step.id, tool_key: step.tool, duration_ms: result.durationMs } });
+      if (!result.ok) {
+        await admin.from("agent_runs").update({ status: "failed", error_code: result.error?.code || "GOAL_STEP_FAILED", output_text: JSON.stringify(stepResults).slice(0, 50000), duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
+        return respond(400, { error: "GOAL_STEP_FAILED", run_id: run.id, step_results: stepResults, plan });
+      }
+    }
+    const durationMs = Date.now() - startedAt;
+    const { error: saveError } = await admin.from("agent_runs").update({ status: "succeeded", output_text: JSON.stringify({ planner: plan.planner, goal: plan.goal, plan, step_results: stepResults }).slice(0, 50000), duration_ms: durationMs, finished_at: new Date().toISOString() }).eq("id", run.id);
+    await admin.from("audit_events").insert({ workspace_id: agent.workspace_id, actor_id: user.id, action: saveError ? "agent.goal_result_save_failed" : "agent.goal_succeeded", entity_type: "agent_run", entity_id: run.id, details: { agent_id: agent.id, step_count: plan.steps.length, duration_ms: durationMs } });
+    if (saveError) return respond(500, { error: "GOAL_RESULT_SAVE_FAILED", run_id: run.id });
+    return respond(200, { run_id: run.id, status: "succeeded", native: true, plan, step_results: stepResults, duration_ms: durationMs });
+  }
+
   if (nativeToolRequested) {
     const { data: toolDefinition, error: toolDefinitionError } = await admin
       .from("agent_tool_registry")
