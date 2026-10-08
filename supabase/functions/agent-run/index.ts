@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.0";
+import { executeNativeTool, NATIVE_TOOL_REGISTRY, type CoreToolKey, type NativeToolContext } from "../_shared/native-kernel.ts";
 
 const ALLOWED_ORIGIN = "https://yudi8377.github.io";
 const corsHeaders = {
@@ -33,7 +34,7 @@ Deno.serve(async (req: Request) => {
   const contentLength = Number(req.headers.get("content-length") || "0");
   if (contentLength > 20000) return respond(413, { error: "REQUEST_TOO_LARGE" });
 
-  let body: { agent_id?: unknown; input?: unknown };
+  let body: { agent_id?: unknown; input?: unknown; tool_key?: unknown; tool_input?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -41,7 +42,15 @@ Deno.serve(async (req: Request) => {
   }
 
   const agentId = typeof body.agent_id === "string" ? body.agent_id : "";
-  const input = typeof body.input === "string" ? body.input.trim() : "";
+  const toolKey = typeof body.tool_key === "string" ? body.tool_key : "";
+  const nativeToolRequested = toolKey.length > 0;
+  const nativeToolInput = body.tool_input;
+  if (nativeToolRequested && (!Object.hasOwn(NATIVE_TOOL_REGISTRY, toolKey) || !nativeToolInput || typeof nativeToolInput !== "object" || Array.isArray(nativeToolInput))) {
+    return respond(400, { error: "INVALID_NATIVE_TOOL_REQUEST" });
+  }
+  const input = nativeToolRequested
+    ? JSON.stringify(nativeToolInput)
+    : typeof body.input === "string" ? body.input.trim() : "";
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(agentId)) {
     return respond(400, { error: "INVALID_AGENT_ID" });
   }
@@ -99,7 +108,7 @@ Deno.serve(async (req: Request) => {
       agent_id: agent.id,
       actor_id: user.id,
       status: "running",
-      input_text: input,
+      input_text: input.slice(0, 12000),
       provider: provider || null,
       model: model || null,
     })
@@ -107,6 +116,74 @@ Deno.serve(async (req: Request) => {
     .single();
 
   if (runCreateError || !run) return respond(500, { error: "RUN_RECORD_CREATE_FAILED" });
+
+  if (nativeToolRequested) {
+    const { data: toolDefinition, error: toolDefinitionError } = await admin
+      .from("agent_tool_registry")
+      .select("tool_key,required_permissions,status,risk_level")
+      .eq("workspace_id", agent.workspace_id)
+      .eq("tool_key", toolKey)
+      .eq("status", "approved")
+      .maybeSingle();
+    const { data: grant, error: grantError } = await admin
+      .from("agent_tool_grants")
+      .select("granted_permissions,status")
+      .eq("workspace_id", agent.workspace_id)
+      .eq("agent_id", agent.id)
+      .eq("tool_key", toolKey)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (toolDefinitionError || grantError) {
+      await admin.from("agent_runs").update({ status: "failed", error_code: "NATIVE_TOOL_LOOKUP_FAILED", duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
+      return respond(503, { error: "NATIVE_TOOL_LOOKUP_FAILED", run_id: run.id });
+    }
+    if (!toolDefinition || !grant) {
+      await admin.from("agent_runs").update({ status: "blocked", error_code: "NATIVE_TOOL_NOT_GRANTED", duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
+      await admin.from("audit_events").insert({
+        workspace_id: agent.workspace_id, actor_id: user.id, action: "agent.native_tool_blocked",
+        entity_type: "agent_run", entity_id: run.id, details: { agent_id: agent.id, tool_key: toolKey, reason: "TOOL_NOT_APPROVED_OR_GRANTED" },
+      });
+      return respond(403, { error: "NATIVE_TOOL_NOT_APPROVED_OR_GRANTED", run_id: run.id });
+    }
+
+    const requiredPermissions = Array.isArray(toolDefinition.required_permissions) ? toolDefinition.required_permissions : [];
+    const grantedPermissions = Array.isArray(grant.granted_permissions) ? grant.granted_permissions : [];
+    if (!requiredPermissions.every((permission: string) => grantedPermissions.includes(permission))) {
+      await admin.from("agent_runs").update({ status: "blocked", error_code: "NATIVE_TOOL_PERMISSION_MISMATCH", duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
+      return respond(403, { error: "NATIVE_TOOL_PERMISSION_MISMATCH", run_id: run.id });
+    }
+
+    const context: NativeToolContext = {
+      actorId: user.id,
+      workspaceId: agent.workspace_id,
+      agentApproved: agent.status === "approved",
+      workspaceRole: membership.role,
+      grantedPermissions,
+      allowedTools: [toolKey as CoreToolKey],
+    };
+    const nativeResult = executeNativeTool(toolKey, nativeToolInput, context);
+    const durationMs = Date.now() - startedAt;
+    const outputText = JSON.stringify(nativeResult);
+    const runStatus = nativeResult.ok ? "succeeded" : "failed";
+    await admin.from("agent_runs").update({
+      status: runStatus,
+      output_text: outputText.slice(0, 50000),
+      error_code: nativeResult.ok ? null : nativeResult.error?.code || "NATIVE_TOOL_FAILED",
+      duration_ms: durationMs,
+      finished_at: new Date().toISOString(),
+    }).eq("id", run.id);
+    await admin.from("audit_events").insert({
+      workspace_id: agent.workspace_id, actor_id: user.id,
+      action: nativeResult.ok ? "agent.native_tool_succeeded" : "agent.native_tool_failed",
+      entity_type: "agent_run", entity_id: run.id,
+      details: { agent_id: agent.id, tool_key: toolKey, duration_ms: durationMs, risk_level: toolDefinition.risk_level },
+    });
+    return respond(nativeResult.ok ? 200 : 400, {
+      run_id: run.id, status: runStatus, native: true, tool: toolKey,
+      result: nativeResult, duration_ms: durationMs,
+    });
+  }
 
   if (provider !== "openai" || !model || !apiKey) {
     const errorCode = provider !== "openai" ? "UNSUPPORTED_OR_UNCONFIGURED_PROVIDER" : !model ? "MODEL_NOT_CONFIGURED" : "OPENAI_API_KEY_MISSING";
