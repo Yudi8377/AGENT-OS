@@ -41,10 +41,12 @@ AGENT-OS is the product and control plane. It must not be a thin wrapper, affili
 - [ ] Add server-side policy decision function and append-only policy audit events.
 
 ### Phase 2 — Deterministic kernel
-- [x] Define typed native plan and step contracts for the first deterministic planner slice; broader Plan/Observation/RunResult state contracts remain pending.
+- [x] Define typed native plan and step contracts for deterministic goal routing, including a bounded two-step text report; general-purpose Plan/Observation/RunResult contracts remain pending.
 - [ ] Build the complete run state machine: queued → planning → awaiting_approval/running → succeeded/failed/cancelled/timed_out.
-- [ ] Implement bounded step loop, idempotency keys, cancellation, deadline, and structured errors.
+- [x] Implement a bounded multi-step loop for the explicit `text-report:` goal with dependency checks and structured failures.
+- [ ] Generalize the loop to arbitrary validated plans; add idempotency keys, cancellation, and durable deadlines.
 - [x] Add native handlers: text statistics/truncation/line splitting, JSON validation, and bounded arithmetic calculation.
+- [x] Execute the deterministic `text-report:` plan as two authorized steps, with per-step grant/permission checks and audit records.
 - [x] Add safe workflow output references (`{ "$ref": "stepId.data.field" }`) with prior-step checks and no expression evaluation.
 - [x] Add a deterministic goal router for explicit `math:`, `text-stats:`, `text-lines:`, and `json-validate:` requests; unsupported goals are rejected instead of guessed.
 - [ ] Add retrieval from workspace knowledge.
