@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.0";
-import { executeNativeTool, NATIVE_TOOL_REGISTRY, validateWorkflow, type CoreToolKey, type NativeToolContext, type WorkflowDefinition } from "./native-kernel.ts";
+import { executeNativeTool, NATIVE_TOOL_REGISTRY, resolveWorkflowInput, validateWorkflow, type CoreToolKey, type NativeToolContext, type WorkflowDefinition } from "./native-kernel.ts";
 
 const ALLOWED_ORIGIN = "https://yudi8377.github.io";
 const corsHeaders = {
@@ -187,9 +187,14 @@ Deno.serve(async (req: Request) => {
           return respond(409, { error: "WORKFLOW_DEPENDENCY_FAILED", run_id: run.id, completed: nodeResults, blocked_node: node.id });
         }
       }
-      const nodeInput = node.input ?? {};
+      const resolvedInput = resolveWorkflowInput(node.input ?? {}, nodeResults);
+      if (!resolvedInput.ok) {
+        await admin.from("agent_runs").update({ status: "blocked", error_code: resolvedInput.error, output_text: JSON.stringify({ completed: nodeResults, blocked_node: node.id }).slice(0, 50000), duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
+        await admin.from("audit_events").insert({ workspace_id: agent.workspace_id, actor_id: user.id, action: "agent.workflow_reference_blocked", entity_type: "agent_run", entity_id: run.id, details: { workflow_id: workflow.id, node_id: node.id, reason: resolvedInput.error } });
+        return respond(400, { error: resolvedInput.error, run_id: run.id, completed: nodeResults, blocked_node: node.id });
+      }
       const context: NativeToolContext = { actorId: user.id, workspaceId: agent.workspace_id, agentApproved: true, workspaceRole: membership.role, grantedPermissions: granted, allowedTools: [node.tool as CoreToolKey] };
-      const result = executeNativeTool(node.tool, nodeInput, context);
+      const result = executeNativeTool(node.tool, resolvedInput.value, context);
       nodeResults[node.id] = { ok: result.ok, tool: result.tool, data: result.data, error: result.error, duration_ms: result.durationMs };
       if (!result.ok) {
         await admin.from("agent_runs").update({ status: "failed", error_code: result.error?.code || "WORKFLOW_NODE_FAILED", output_text: JSON.stringify(nodeResults).slice(0, 50000), duration_ms: Date.now() - startedAt, finished_at: new Date().toISOString() }).eq("id", run.id);
