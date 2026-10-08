@@ -94,7 +94,7 @@ export const NATIVE_TOOL_REGISTRY: Record<CoreToolKey, NativeToolDefinition> = {
 };
 
 const encoder = new TextEncoder();
-const byteLength = (value: unknown) => encoder.encode(JSON.stringify(value)).byteLength;
+const byteLength = (value: unknown) => encoder.encode(JSON.stringify(value) ?? "").byteLength;
 
 function fail(tool: CoreToolKey, code: string, message: string, start: number): NativeToolResult {
   return { ok: false, tool, error: { code, message }, durationMs: Date.now() - start };
@@ -119,7 +119,7 @@ export function authorizeNativeTool(
   if (!["owner", "admin", "builder", "operator"].includes(context.workspaceRole)) {
     return { ok: false, code: "ROLE_FORBIDDEN", message: "Workspace role cannot execute native tools." };
   }
-  if (!(toolKey in NATIVE_TOOL_REGISTRY)) {
+  if (!Object.hasOwn(NATIVE_TOOL_REGISTRY, toolKey)) {
     return { ok: false, code: "TOOL_NOT_ALLOWLISTED", message: "Tool is not in the compiled native allowlist." };
   }
   const tool = NATIVE_TOOL_REGISTRY[toolKey as CoreToolKey];
@@ -144,7 +144,7 @@ export function executeNativeTool(
   const start = Date.now();
   const auth = authorizeNativeTool(toolKey, context, input);
   if (!auth.ok) return fail(
-    (toolKey in NATIVE_TOOL_REGISTRY ? toolKey : "core.text.stats") as CoreToolKey,
+    (Object.hasOwn(NATIVE_TOOL_REGISTRY, toolKey) ? toolKey : "core.text.stats") as CoreToolKey,
     auth.code,
     auth.message,
     start,
@@ -214,7 +214,7 @@ export function validateWorkflow(
   for (const node of workflow.nodes) {
     if (!node.id || node.id.length > 80 || byId.has(node.id)) errors.push("NODE_ID_INVALID_OR_DUPLICATE");
     byId.set(node.id, node);
-    if (!(node.tool in NATIVE_TOOL_REGISTRY)) errors.push("NODE_TOOL_NOT_ALLOWLISTED");
+    if (typeof node.tool !== "string" || !Object.hasOwn(NATIVE_TOOL_REGISTRY, node.tool)) errors.push("NODE_TOOL_NOT_ALLOWLISTED");
     if (node.requiresApproval && typeof node.requiresApproval !== "boolean") errors.push("APPROVAL_FLAG_INVALID");
   }
   for (const node of workflow.nodes) {
