@@ -34,7 +34,8 @@ AGENT-OS is the product and control plane. It must not be a thin wrapper, affili
 ## Implementation sequence
 
 ### Phase 1 — Native data and policy (started)
-- [x] Persist workspace-scoped skills, tools, workflows, memory, and evaluation cases.
+- [x] Persist workspace-scoped skills, tools, per-agent tool grants, workflows, memory, and evaluation cases.
+- [x] Deploy a compiled allowlist dispatcher for deterministic native tools in the secured Edge Function.
 - [x] Apply RLS and role-scoped policies to those records.
 - [ ] Add database tests for cross-workspace isolation and role boundaries.
 - [ ] Add server-side policy decision function and append-only policy audit events.
@@ -43,7 +44,8 @@ AGENT-OS is the product and control plane. It must not be a thin wrapper, affili
 - [ ] Define typed Plan, Step, ToolCall, Observation, and RunResult contracts.
 - [ ] Build run state transitions: queued → planning → awaiting_approval/running → succeeded/failed/cancelled/timed_out.
 - [ ] Implement bounded step loop, idempotency keys, cancellation, deadline, and structured errors.
-- [ ] Add native handlers first: text transform, JSON validate/transform, retrieval from workspace knowledge, and safe calculations.
+- [x] Add native handlers: text statistics/truncation/line splitting and JSON validation.
+- [ ] Add retrieval from workspace knowledge and safe calculations.
 - [ ] Do not add shell, unrestricted filesystem, arbitrary HTTP, or dynamic code evaluation.
 
 ### Phase 3 — Model independence
