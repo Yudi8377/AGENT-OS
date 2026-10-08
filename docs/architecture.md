@@ -4,9 +4,11 @@
 
 - React + Vite modular UI with an explicit local-workspace status.
 - Optional Supabase browser client using only the project URL and publishable key.
-- Proposed core schema for profiles, workspaces, workspace membership, agent definitions, and audit events.
+- Applied schema for profiles, workspaces, workspace membership, agent definitions, audit events, and agent run history.
 - Row Level Security is enabled for every exposed application table.
-- Agent execution remains disabled until the server-side runtime is implemented and reviewed.
+- Atomic `create_workspace` and role-checked `set_agent_status` RPCs record changes in the audit table.
+- Deployed JWT-protected `agent-run` Edge Function: verifies user, workspace membership, role, and agent approval; calls OpenAI server-side only when configured; otherwise fails closed and records a blocked run.
+- Current runtime has no external tools or code execution sandbox. It is a model-only execution slice, not production-complete.
 
 ## Modules
 
@@ -28,11 +30,11 @@
 
 ## Bootstrap workflow
 
-1. Create/select a dedicated Supabase project for Agent OS.
-2. Review and apply the SQL migration in supabase/migrations to that project.
-3. Configure VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in local/deployment environments.
+1. Supabase project `tgicltoykzpsridyhvci` is the dedicated Agent OS project.
+2. Applied migrations are tracked in `supabase/migrations`; keep filenames aligned with the recorded migration versions.
+3. Configure `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in local/deployment environments.
 4. Enable email confirmation and configure allowed redirect URLs in Supabase Auth.
-5. Implement sign-in, workspace creation, agent CRUD, and audit logging; then run RLS/advisor tests.
-6. Add server-side runtime and tool execution only after security review.
+5. Add `OPENAI_API_KEY` to Supabase Edge Function Secrets to enable model calls; never expose it to the browser.
+6. Before production, implement quota/rate limits, model cost budgets, automated RLS tests, a sandbox for tools, workflow runner, and incident/retention policies.
 
-The SQL migration is committed as a proposal; it has **not** been applied to any connected Supabase project. This prevents accidental changes to the existing Education OS or AKVISIO databases.
+Security Advisor warns about the two authenticated SECURITY DEFINER RPCs. These are intentionally executable only by the authenticated role and validate caller identity/role internally; continue reviewing their bodies whenever permissions change. Performance Advisor also reports three unindexed foreign keys.
