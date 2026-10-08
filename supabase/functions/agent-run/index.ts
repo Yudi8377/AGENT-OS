@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.0";
-import { executeNativeTool, NATIVE_TOOL_REGISTRY, type CoreToolKey, type NativeToolContext } from "../_shared/native-kernel.ts";
+import { executeNativeTool, NATIVE_TOOL_REGISTRY, type CoreToolKey, type NativeToolContext } from "./native-kernel.ts";
 
 const ALLOWED_ORIGIN = "https://yudi8377.github.io";
 const corsHeaders = {
