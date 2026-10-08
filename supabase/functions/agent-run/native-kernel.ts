@@ -290,7 +290,7 @@ export interface NativePlan {
  * language understanding: unknown or underspecified goals are rejected for clarification.
  */
 export function planNativeGoal(goal: string): { ok: true; plan: NativePlan } | { ok: false; error: string; supportedIntents: string[] } {
-  const supportedIntents = ["math: <arithmetic expression>", "text-stats: <text>", "text-lines: <text>", "json-validate: <JSON text>"];
+  const supportedIntents = ["math: <arithmetic expression>", "text-stats: <text>", "text-lines: <text>", "json-validate: <JSON text>", "text-report: <text (runs stats and line analysis)>"];
   if (typeof goal !== "string" || !goal.trim() || goal.length > 4000) return { ok: false, error: "GOAL_INVALID", supportedIntents };
   const normalized = goal.trim();
   const colon = normalized.indexOf(":");
@@ -298,6 +298,20 @@ export function planNativeGoal(goal: string): { ok: true; plan: NativePlan } | {
   const intent = normalized.slice(0, colon).trim().toLowerCase().replace(/\s+/g, "-");
   const payload = normalized.slice(colon + 1).trim();
   if (!payload) return { ok: false, error: "GOAL_PAYLOAD_REQUIRED", supportedIntents };
+  if (intent === "text-report") {
+    const statsInput = { text: payload };
+    const linesInput = { text: payload };
+    const limit = NATIVE_TOOL_REGISTRY["core.text.stats"].maxInputBytes;
+    if (byteLength(statsInput) > limit || byteLength(linesInput) > NATIVE_TOOL_REGISTRY["core.text.lines"].maxInputBytes) return { ok: false, error: "GOAL_INPUT_TOO_LARGE", supportedIntents };
+    return { ok: true, plan: {
+      version: 1, planner: "native-deterministic-v1", goal: normalized,
+      steps: [
+        { id: "text_stats", tool: "core.text.stats", input: statsInput, dependsOn: [], rationale: "Measure the text before generating the line breakdown." },
+        { id: "text_lines", tool: "core.text.lines", input: linesInput, dependsOn: ["text_stats"], rationale: "Produce a numbered line breakdown after the statistics step succeeds." },
+      ],
+      limitations: ["Deterministic multi-step plan; not a general-purpose LLM planner.", "Each step independently requires an approved tool, active agent grant, and matching permissions."],
+    } };
+  }
   let tool: CoreToolKey, input: Record<string, JsonValue>, rationale: string;
   switch (intent) {
     case "math":
