@@ -198,6 +198,60 @@ export function executeNativeTool(
 }
 
 /** Validate workflow structure and return a safe topological execution order. */
+
+/**
+ * Resolve explicit workflow references such as { "$ref": "stepA.data.words" }.
+ * Only completed, successful prior-node results can be referenced. No expression
+ * evaluation, prototype traversal, or arbitrary code is permitted.
+ */
+export function resolveWorkflowInput(
+  input: Record<string, JsonValue>,
+  completedResults: Record<string, unknown>,
+): { ok: true; value: Record<string, JsonValue> } | { ok: false; error: string } {
+  const blockedKeys = new Set(["__proto__", "prototype", "constructor"]);
+  function resolve(value: unknown, depth: number): unknown {
+    if (depth > 12) throw new Error("WORKFLOW_REFERENCE_DEPTH_EXCEEDED");
+    if (Array.isArray(value)) return value.map((item) => resolve(item, depth + 1));
+    if (value && typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      if (Object.keys(record).length === 1 && typeof record.$ref === "string") {
+        const path = record.$ref.split(".");
+        if (path.length < 2 || path.some((part) => !part || blockedKeys.has(part))) {
+          throw new Error("WORKFLOW_REFERENCE_INVALID");
+        }
+        const sourceNode = path[0];
+        const source = completedResults[sourceNode] as Record<string, unknown> | undefined;
+        if (!source || source.ok !== true) throw new Error("WORKFLOW_REFERENCE_SOURCE_UNAVAILABLE");
+        let current: unknown = source;
+        for (const part of path.slice(1)) {
+          if (!current || typeof current !== "object" || Array.isArray(current) || !Object.hasOwn(current, part)) {
+            throw new Error("WORKFLOW_REFERENCE_PATH_NOT_FOUND");
+          }
+          current = (current as Record<string, unknown>)[part];
+        }
+        if (current === undefined) throw new Error("WORKFLOW_REFERENCE_PATH_NOT_FOUND");
+        return current;
+      }
+      const output: Record<string, unknown> = {};
+      for (const [key, child] of Object.entries(record)) {
+        if (blockedKeys.has(key)) throw new Error("WORKFLOW_REFERENCE_INVALID_KEY");
+        output[key] = resolve(child, depth + 1);
+      }
+      return output;
+    }
+    return value;
+  }
+  try {
+    const value = resolve(input, 0);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return { ok: false, error: "WORKFLOW_INPUT_INVALID" };
+    }
+    return { ok: true, value: value as Record<string, JsonValue> };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "WORKFLOW_REFERENCE_FAILED" };
+  }
+}
+
 export function validateWorkflow(
   workflow: WorkflowDefinition,
   maxSteps = 20,
