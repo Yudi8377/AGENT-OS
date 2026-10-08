@@ -260,7 +260,7 @@ function Dashboard({ user, workspace, onSignOut }) {
 
 function Metric({icon:Icon,label,value,sub}) { return <div className="metric-card"><div className="metric-top"><span>{label}</span><Icon size={17}/></div><strong>{value}</strong><small>{sub}</small></div>; }
 function PageHeader({eyebrow,title,subtitle,action}) { return <div className="subpage-heading"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
-function SourceCard({item}) { return <article className="source-card"><div className="source-icon"><AppWindow size={19}/></div><div className="source-type">{item.type}</div><h3>{item.name}</h3><p>{item.detail}</p><div className="source-meta"><span>{item.license}</span></div><a href={item.url} target="_blank" rel="noreferrer">View source <span>↗</span></a></article>; }
+function SourceCard({item}) { return <article className="source-card"><div className="source-icon"><AppWindow size={19}/></div><div className="source-type">{item.type}</div><h3>{item.name}</h3><p>{item.detail}</p><div className="source-meta"><span>{item.license}</span></div><span className="source-reference">Reference only · not used at runtime</span></article>; }
 function FlowNode({icon:Icon,title,subtitle}) { return <div className="flow-node"><div><Icon size={19}/></div><b>{title}</b><small>{subtitle}</small></div>; }
 
 function App() {
