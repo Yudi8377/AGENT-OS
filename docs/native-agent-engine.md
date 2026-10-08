@@ -55,9 +55,9 @@ AGENT-OS is the product and control plane. It must not be a thin wrapper, affili
 - [ ] Treat the model as a planner/reasoner, not an authorization authority. Policy is deterministic code.
 
 ### Phase 4 — Workflow and memory
-- [ ] Compile workflow DAGs, validate node types/edges, enforce max steps/time, and persist every transition.
+- [x] Compile workflow DAGs, validate native node types/dependencies/cycles, enforce max steps/time, and persist the bounded run result. Per-node audit detail is recorded; full transition/event history remains future work.
 - [ ] Add memory write/retrieval APIs with provenance, expiry, sensitivity filtering, and workspace scope.
-- [ ] Add approval checkpoints for consequential actions.
+- [x] Block workflow nodes that declare a human approval gate until a separate approval-resume mechanism exists. Durable approval/resume is still pending.
 
 ### Phase 5 — Secure execution and operations
 - [ ] Add an isolated worker/sandbox under project control; Edge Functions alone are not a general-purpose code sandbox.
